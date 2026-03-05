@@ -1,0 +1,6 @@
+{
+    "require": {
+        "finnhub/client": "^2.0",
+        "phpoffice/phpspreadsheet": "^1.12"
+    }
+}
