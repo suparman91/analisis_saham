@@ -5,7 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Manual Scan BPJP & BSJP</title>
     <style>
-        body { font-family: Arial, sans-serif; padding: 20px; }
+        /* Navigation Menu */
+        .top-menu { background: #0f172a; padding: 12px 20px; display: flex; align-items: center; gap: 15px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+        .top-menu a { color: #cbd5e1; text-decoration: none; padding: 8px 12px; border-radius: 5px; font-weight: 500; font-size: 14px; transition: all 0.2s; }
+        .top-menu a:hover { background: #1e293b; color: #fff; }
+        .top-menu a.active { background: #3b82f6; color: #fff; }
+
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; }
         .card { border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; border-radius: 5px; max-width: 400px; }
         button { 
             padding: 10px 15px; 
@@ -22,25 +28,90 @@
         }
         .status { margin-top: 10px; font-weight: bold; color: #d9534f; }
         .status.active { color: #5cb85c; }
+        
+        /* Layout Grid untuk Mobile */
+        .grid-container { display: grid; grid-template-columns: 1fr; gap: 20px; }
+        @media (min-width: 768px) {
+            .grid-container { grid-template-columns: 1fr 1fr; }
+            .top-menu { flex-direction: row; }
+        }
+        @media (max-width: 768px) {
+            .top-menu { flex-direction: column; align-items: stretch; text-align: center; }
+            .card { max-width: 100%; }
+            body { padding: 10px; }
+            table { font-size: 12px; }
+        }
+        
+        .history-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .history-table th, .history-table td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+        .history-table th { background-color: #f8f9fa; }
     </style>
 </head>
 <body>
 
+    <nav class="top-menu">
+        <a href="index.php">📊 Dashboard Market</a>
+        <a href="chart.php">📈 Chart & Analisis</a>
+        <a href="scan_manual.php" class="active">🔍 Scanner BSJP/BPJP</a>
+    </nav>
+
     <h2>Scan Saham Manual (Berdasarkan Jam Bursa)</h2>
     <p>Waktu saat ini (Server): <span id="current-time">Loading...</span> WIB</p>
 
-    <div class="card">
-        <h3>BPJP (Beli Pagi Jual Pagi)</h3>
-        <p>Jadwal Buka: 08:50 - 09:00 WIB (Senin - Jumat)</p>
-        <button id="btn-bpjp" onclick="runScan('BPJP')" disabled>Jalankan Scan BPJP</button>
-        <div id="status-bpjp" class="status">Tombol belum aktif</div>
+    <div class="grid-container">
+        <div class="card">
+            <h3>BPJP (Beli Pagi Jual Pagi)</h3>
+            <p>Jadwal Buka: 08:50 - 09:00 WIB (Senin - Jumat)</p>
+            <button id="btn-bpjp" onclick="runScan('BPJP')" disabled>Jalankan Scan BPJP</button>
+            <div id="status-bpjp" class="status">Tombol belum aktif</div>
+        </div>
+
+        <div class="card">
+            <h3>BSJP (Beli Sore Jual Pagi)</h3>
+            <p>Jadwal Buka: 15:30 - 16:00 WIB (Senin - Jumat)</p>
+            <button id="btn-bsjp" onclick="runScan('BSJP')" disabled>Jalankan Scan BSJP</button>
+            <div id="status-bsjp" class="status">Tombol belum aktif</div>
+        </div>
     </div>
 
-    <div class="card">
-        <h3>BSJP (Beli Sore Jual Pagi)</h3>
-        <p>Jadwal Buka: 15:30 - 16:00 WIB (Senin - Jumat)</p>
-        <button id="btn-bsjp" onclick="runScan('BSJP')" disabled>Jalankan Scan BSJP</button>
-        <div id="status-bsjp" class="status">Tombol belum aktif</div>
+    <!-- Riwayat Scan Tersimpan -->
+    <div class="card" style="max-width:100%;">
+        <h3>Riwayat Scan Terakhir (Tersimpan di Database)</h3>
+        <div style="overflow-x:auto;">
+        <?php
+        require_once "db.php";
+        $db = db_connect();
+        
+        // Pengecekan pdo atau mysqli
+        if ($db instanceof PDO) {
+            $stmt = $db->query("SELECT * FROM scan_history ORDER BY created_at DESC LIMIT 15");
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } else {
+            $res = $db->query("SELECT * FROM scan_history ORDER BY created_at DESC LIMIT 15");
+            $rows = [];
+            if ($res && $res->num_rows > 0) {
+                while($row = $res->fetch_assoc()) $rows[] = $row;
+            }
+        }
+        
+        if (count($rows) > 0) {
+            echo "<table class='history-table'>";
+            echo "<tr><th>Tipe</th><th>Saham</th><th>Harga (Rp)</th><th>Tanggal Data</th><th>Waktu Scan</th></tr>";
+            foreach ($rows as $row) {
+                echo "<tr>";
+                echo "<td><span class='status active'>{$row['scan_type']}</span></td>";
+                echo "<td><strong>{$row['symbol']}</strong></td>";
+                echo "<td>" . number_format($row['price'],0,',','.') . "</td>";
+                echo "<td>{$row['scan_date']}</td>";
+                echo "<td>{$row['created_at']}</td>";
+                echo "</tr>";
+            }
+            echo "</table>";
+        } else {
+            echo "<p>Belum ada riwayat hasil scan yang tersimpan.</p>";
+        }
+        ?>
+        </div>
     </div>
 
     <!-- Kontainer Hasil Scan -->
@@ -126,7 +197,14 @@
             // KITA BATASI KE EMITEN LIQUID/LQ45 AGAR PROSESNYA SANGAT CEPAT
             // Pastikan format ticker menggunakan format database Anda (.JK)
             const liquidSymbols = "BBCA.JK,BBRI.JK,BBNI.JK,BMRI.JK,ASII.JK,TLKM.JK,GOTO.JK,ADRO.JK,AMMN.JK,AMRT.JK,UNTR.JK,KLBF.JK,CPIN.JK,ICBP.JK,INDF.JK,BRPT.JK,PTBA.JK,ITMG.JK,PGAS.JK,MEDC.JK";
-            fetch('fetch_realtime.php?symbols=' + liquidSymbols)
+            
+            let syncUrl = 'fetch_realtime.php?symbols=' + liquidSymbols;
+            try { 
+                const gk = localStorage.getItem('goapi_key');
+                if (gk) syncUrl += '&goapi_key=' + encodeURIComponent(gk);
+            } catch(e){}
+            
+            fetch(syncUrl)
                 .then(res => res.text()) // bisa return json/text
                 .then(syncData => {
                     // Update UI kalau sync beres

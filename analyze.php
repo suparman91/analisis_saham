@@ -217,6 +217,8 @@ function analyze_symbol($mysqli, $symbol) {
     $closes = array_column($prices, 'close');
     $sma5 = sma($closes, 5);
     $sma20 = sma($closes, 20);
+    $sma50 = sma($closes, 50);
+    $sma200 = sma($closes, 200);
     $rsiArr = rsi($closes, 14);
     $macdArr = macd($closes);
     $bb = bollinger($closes, 20, 2.0);
@@ -347,6 +349,8 @@ function analyze_symbol($mysqli, $symbol) {
         'prices'=>$prices,
         'sma5'=>$sma5,
         'sma20'=>$sma20,
+        'sma50'=>$sma50,
+        'sma200'=>$sma200,
         'bollinger'=>$bb,
         'rsi'=>$rsiArr,
         'macd'=>$macdArr,

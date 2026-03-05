@@ -23,6 +23,13 @@ if ($FINNHUB_API_KEY !== '') {
     $FINNHUB_API_KEY = trim($FINNHUB_API_KEY, "\"' \t\n\r");
 }
 
+// GoAPI API key parameter
+$GOAPI_API_KEY = $_GET['goapi_key'] ?? getenv('GOAPI_API_KEY') ?? '';
+if ($GOAPI_API_KEY !== '') {
+    $GOAPI_API_KEY = urldecode($GOAPI_API_KEY);
+    $GOAPI_API_KEY = trim($GOAPI_API_KEY, "\"' \t\n\r");
+}
+
 if ($useAll) {
     $symbols = [];
     $res = $mysqli->query('SELECT symbol FROM stocks');
@@ -169,6 +176,36 @@ function fetch_finnhub_market_status($apiKey = '') {
     if (is_array($j) && isset($j['error'])) return ['error'=>'access_denied','http'=>$http,'message'=>$j['error'],'url'=>$url];
     // Return parsed payload when available, otherwise raw text
     return ['http'=>$http,'url'=>$url,'body'=>$j ?? $txt];
+}
+
+// ======== NEW: GOAPI FETCH ========
+function fetch_goapi_quote($symbol, $apiKey) {
+    if (!$apiKey) return null;
+    $sym = strtoupper($symbol);
+    // GoAPI IDX stocks usually don't use .JK suffix, just raw ticker like BBCA
+    $sym = str_replace('.JK', '', $sym);
+    
+    $url = "https://api.goapi.io/stock/idx/prices?api_key=" . urlencode($apiKey) . "&symbols=" . urlencode($sym);
+    $httpCode = 0;
+    $res = curl_fetch($url, [], 10, $httpCode);
+
+    if (!$res || $httpCode !== 200) return null;
+    $j = json_decode($res, true);
+
+    if (!$j || !isset($j['status']) || $j['status'] !== 'success' || empty($j['data']) || empty($j['data']['results'])) {
+        return null;
+    }
+
+    $d = $j['data']['results'][0];
+    $price = isset($d['close']) ? $d['close'] : null;
+    if (!$price) return null; // Wajib ada harga
+
+    return [
+        'price'          => (float)$price,
+        'time'           => time(),
+        'change'         => isset($d['change']) ? (float)$d['change'] : 0,
+        'change_percent' => isset($d['change_pct']) ? (float)$d['change_pct'] : 0,
+    ];
 }
 
 // Centralized cURL fetch helper with browser-like defaults
@@ -529,6 +566,15 @@ function fetch_investing_quote($symbol) {
 $out = [];
 foreach ($symbols as $sym) {
     $debug = [];
+
+    // 0.1) Try GoAPI (Default/Preferred if Key exists)
+    $go = fetch_goapi_quote($sym, $GOAPI_API_KEY);
+    $debug['goapi'] = $go;
+    if (is_array($go) && isset($go['price']) && $go['price'] !== null) {
+        $go['source'] = 'GoAPI';
+        $out[$sym] = $go;
+        continue;
+    }
 
     // 0) Try local headless Node scraper service if available (try common ports)
     $headlessCandidates = [

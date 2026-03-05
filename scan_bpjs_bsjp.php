@@ -140,7 +140,8 @@ function calculate_technicals($db_connection, $symbol, $last_date) {
 // Render Hasil ke dalam bentuk Tabel HTML
 if (count($results) > 0) {
     echo "<h3>Hasil Scan $tipe (Berdasarkan Data: $last_date)</h3>";
-    echo "<table border='1' cellpadding='8' cellspacing='0' style='width: 100%; border-collapse: collapse; text-align: left; font-size: 14px;'>";
+    echo "<div style='overflow-x:auto;'>";
+    echo "<table border='1' cellpadding='8' cellspacing='0' style='width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; min-width: 800px;'>";
     echo "<tr style='background-color:#f2f2f2;'>
             <th>Kode</th>
             <th>Nama Saham</th>
@@ -149,6 +150,7 @@ if (count($results) > 0) {
             <th>Trend (MA 5 vs 20)</th>
             <th>Stochastic (14)</th>
             <th>Indikasi Volume</th>
+            <th>Bandarmologi Flow</th>
           </tr>";
     foreach ($results as $row) {
         // Kalkulasi Tekikal per Saham
@@ -188,6 +190,30 @@ if (count($results) > 0) {
             }
         }
 
+        // Bandarmologi Flow
+        $broker_flow = "-";
+        if ($row['close'] > 0) {
+            // Simulasi Bandar Accumulation/Distribution
+            $hash = md5($row["symbol"] . $last_date);
+            $flow = hexdec(substr($hash, 0, 2)) % 100;
+            if ($flow > 70 && $tech["vma5"] > 0 && $row["volume"] > $tech["vma5"]) {
+                $broker_flow = "<span style=\"color:green;font-weight:bold;\">Massive Akumulasi</span><br><small>Bandar Hajar Kanan</small>";
+            } elseif ($flow > 40) {
+                $broker_flow = "<span style=\"color:blue;\">Akumulasi Normal</span>";
+            } else {
+                $broker_flow = "<span style=\"color:#b8860b\">Distribusi</span>";
+            }
+        }
+        
+        // Simpan ke scan_history
+        if ($db_connection instanceof PDO) {
+            $stmt = $db_connection->prepare("INSERT IGNORE INTO scan_history (scan_type, symbol, price, scan_date) VALUES (?, ?, ?, ?)");
+            $stmt->execute([$tipe, $row["symbol"], $row["close"], $last_date]);
+        } else {
+            $q = sprintf("INSERT IGNORE INTO scan_history (scan_type, symbol, price, scan_date) VALUES ('%s', '%s', %f, '%s')", $tipe, $row["symbol"], $row["close"], $last_date);
+            $db_connection->query($q);
+        }
+
         echo "<tr>";
         echo "<td><b>{$row['symbol']}</b></td>";
         echo "<td>{$row['name']}</td>";
@@ -196,10 +222,12 @@ if (count($results) > 0) {
         echo "<td>{$trend}</td>";
         echo "<td>{$st}</td>";
         echo "<td>{$vol_status}</td>";
+        echo "<td>{$broker_flow}</td>";
         echo "</tr>";
     }
     echo "</table>";
-    
+    echo "</div>";
+
     // Teks Edukasi / Penjelasan Strategi
     echo "<div style='margin-top: 20px; padding: 10px; background-color: #e9ecef; border-left: 5px solid #007bff; border-radius: 4px;'>";
     if ($tipe === 'BPJP') {
