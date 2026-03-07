@@ -167,6 +167,8 @@ function get_mock_bandar($symbol, $volume) {
         <a href="index.php" class="active">📊 Dashboard Market</a>
         <a href="chart.php">📈 Chart & Analisis</a>
         <a href="scan_manual.php">🔍 Scanner BSJP/BPJP</a>
+        <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
+        <a href="ara_hunter.php">🚀 ARA Hunter</a>
     </nav>
     
     <h1>Dashboard Pasar IHSG</h1>

@@ -53,6 +53,8 @@
         <a href="index.php">📊 Dashboard Market</a>
         <a href="chart.php">📈 Chart & Analisis</a>
         <a href="scan_manual.php" class="active">🔍 Scanner BSJP/BPJP</a>
+        <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
+        <a href="ara_hunter.php">🚀 ARA Hunter</a>
     </nav>
 
     <h2>Scan Saham Manual (Berdasarkan Jam Bursa)</h2>

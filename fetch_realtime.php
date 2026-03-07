@@ -189,8 +189,8 @@ function fetch_goapi_quote($symbol, $apiKey) {
     $httpCode = 0;
     $res = curl_fetch($url, [], 10, $httpCode);
 
-    if (!$res || $httpCode !== 200) return null;
-    $j = json_decode($res, true);
+    if (isset($res['error']) || $httpCode !== 200) return null;
+    $j = json_decode($res['body'], true);
 
     if (!$j || !isset($j['status']) || $j['status'] !== 'success' || empty($j['data']) || empty($j['data']['results'])) {
         return null;

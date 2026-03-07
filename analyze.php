@@ -318,20 +318,57 @@ function analyze_symbol($mysqli, $symbol) {
     if ($bbLower !== null && $bbUpper !== null) {
         $entry_price = round($latest['close']);
         
-        // Take profit around upper BB, or +5% if too tight
-        $take_profit = round(max($bbUpper, $entry_price * 1.05), 0);
+        // Prediksi persentase arah naik maksimal
+        // Cek berapa beda antara harga saat ini dengan Atap Bollinger.
+        $potensi_upside_bb = ($bbUpper - $entry_price) / $entry_price;
         
-        // Stop loss around lower BB, or -3% if too tight
-        $cut_loss = round(min($bbLower, $entry_price * 0.97), 0);
+        // Logika Dinamis Take Profit:
+        // - Kalau bbUpper cuma beda dikit < 5%, kita set default 5%.
+        // - Kalau bbUpper lumayan lebar (misal 8-15%), kita pasang sesuai bbUpper.
+        // - Tapi kalau harga sedang memuncak dengan dorongan MACD dan RSI > 60 belum mentok, 
+        //   kita proyeksikan target fibonacci / rentang rally dinamis bisa sampai 15% (bahkan potensi ARA 20-34% di papan tertentu).
+        $target_multiplier = 1.05; // Base minimal +5%
         
-        // For penny stocks (< 100), adjust rounding to match tick sizes
+        if ($potensi_upside_bb > 0.05) {
+            // Gunakan ceiling Bollinger band kalau ternyata rentangnya lebar
+            $target_multiplier = 1 + $potensi_upside_bb; 
+        } 
+        
+        // Cek anomali kuat: jika ada MACD Positive & Signal Strong Buy, boost ekspektasi
+        if (strpos($signal, 'STRONG BUY') !== false && $macdHistLatest > 0) {
+            // Tambahkan booster profit 8% s/d 15% lebih agresif
+            $target_multiplier = max($target_multiplier, 1.15); 
+        }
+
+        // Kalau saham gocap/ratusan perak volatilitasnya lebih brutal (Gampang capai +20%)
+        if ($entry_price > 50 && $entry_price <= 500 && strpos($signal, 'BUY') !== false) {
+            $target_multiplier = max($target_multiplier, 1.20); 
+        }
+
+        // Maksimal ekspektasi yang wajar (agar sistem ga menyuruh TP +80% esok hari)
+        $target_multiplier = min($target_multiplier, 1.34); // Mentok limit wajar ARA/multidays swing (34%)
+
+        $take_profit = round($entry_price * $target_multiplier, 0);
+        
+        // Stop loss: menyesuaikan Support BB Lower, dengan toleransi minus 3-7%
+        // Apabila bbLower sangat jauh ke bawah, batasi SL maksimal minus 8% biar risk rasionya rasional.
+        $sl_multiplier = max(($bbLower / $entry_price), 0.92); // maksimal loss minus 8%
+        $sl_multiplier = min($sl_multiplier, 0.97); // jika support terlalu rapat, wajarkan jadi -3%
+
+        $cut_loss = round($entry_price * $sl_multiplier, 0);
+        
+        // Perbaiki pembulatan harga saham sesuai fraksi / tick rupiah
         if ($entry_price < 200) {
             $take_profit = round($take_profit);
             $cut_loss = round($cut_loss);
+        } else {
+             // Pembulatan wajar kelipatan 5 atau 10
+             $take_profit = round($take_profit / 5) * 5;
+             $cut_loss = round($cut_loss / 5) * 5;
         }
         
     } else {
-        // Fallback simple percentages
+        // Fallback simple percentages (Bila data tidak cukup)
         $entry_price = $latest['close'];
         $take_profit = $entry_price * 1.05;
         $cut_loss = $entry_price * 0.95;

@@ -61,6 +61,8 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
     <a href="index.php">📊 Dashboard Market</a>
     <a href="chart.php" class="active">📈 Chart & Analisis</a>
     <a href="scan_manual.php">🔍 Scanner BSJP/BPJP</a>
+    <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
+    <a href="ara_hunter.php">🚀 ARA Hunter</a>
     <div class="top-menu-right">
       <button id="btnSettings" class="btn-settings">⚙️ Settings & API Key</button>
     </div>
@@ -192,42 +194,55 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
     let liveUpdateInterval;
 
     function updateLivePrice(symbol) {
+      const srcEl2 = document.getElementById('latestSource');
+      srcEl2.innerText = 'checking live...';
+      srcEl2.className = 'badge hold';
+
       const finnhubKey = localStorage.getItem('finnhub_key') || '';
       const goapiKey = localStorage.getItem('goapi_key') || '';
       fetch('fetch_realtime.php?symbols='+encodeURIComponent(symbol)+'&finnhub_key='+encodeURIComponent(finnhubKey)+'&goapi_key='+encodeURIComponent(goapiKey))
         .then(r=>r.json())
         .then(rt=>{
-          if (rt && rt.data && rt.data[symbol] && rt.data[symbol].price && !isNaN(rt.data[symbol].price)) {
+          if (rt && rt.data && rt.data[symbol]) {
             const p = rt.data[symbol];
-            document.getElementById('latestPrice').innerText = Number(p.price).toLocaleString();
-            
-            if (p.time) {
-              const dt = new Date(p.time * 1000);
-              document.getElementById('latestDate').innerText = dt.toLocaleString('id-ID', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' WIB';
-            } else if (p.raw && p.raw.t) {
-              const dt = new Date(p.raw.t * 1000);
-              document.getElementById('latestDate').innerText = dt.toLocaleString('id-ID', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            }
-            
-            const srcEl2 = document.getElementById('latestSource');
-            srcEl2.innerText = p.source ? 'live (' + p.source + ')' : 'live (auto)'; srcEl2.className = 'badge buy';
+            if (p.price && !isNaN(p.price)) {
+              document.getElementById('latestPrice').innerText = Number(p.price).toLocaleString();
 
-            if (chart && chart.data && chart.data.datasets && chart.data.datasets[0] && chart.data.datasets[0].data) {
-                const dataArr = chart.data.datasets[0].data;
-                if (dataArr.length > 0) {
-                    const lastCandle = dataArr[dataArr.length - 1];
-                    lastCandle.c = p.price;
-                    if (p.price > lastCandle.h) lastCandle.h = p.price;
-                    if (p.price < lastCandle.l) lastCandle.l = p.price;
-                    chart.update('none');
-                }
+              if (p.time) {
+                const dt = new Date(p.time * 1000);
+                document.getElementById('latestDate').innerText = dt.toLocaleString('id-ID', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' WIB';
+              } else if (p.raw && p.raw.t) {
+                const dt = new Date(p.raw.t * 1000);
+                document.getElementById('latestDate').innerText = dt.toLocaleString('id-ID', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+              }
+
+              srcEl2.innerText = p.source ? 'live (' + p.source + ')' : 'live (auto)'; 
+              srcEl2.className = 'badge buy';
+
+              if (chart && chart.data && chart.data.datasets && chart.data.datasets[0] && chart.data.datasets[0].data) {
+                  const dataArr = chart.data.datasets[0].data;
+                  if (dataArr.length > 0) {
+                      const lastCandle = dataArr[dataArr.length - 1];
+                      lastCandle.c = p.price;
+                      if (p.price > lastCandle.h) lastCandle.h = p.price;
+                      if (p.price < lastCandle.l) lastCandle.l = p.price;
+                      chart.update('none');
+                  }
+              }
+            } else {
+              srcEl2.innerText = p.error ? 'err: ' + p.error : 'cache (live fail)';
+              srcEl2.className = 'badge sell';
             }
+          } else {
+            srcEl2.innerText = 'cache (no live)';
+            srcEl2.className = 'badge hold';
           }
         }).catch(e=>{
           console.warn('Realtime fetch failed', e);
+          srcEl2.innerText = 'offline';
+          srcEl2.className = 'badge sell';
         });
     }
-
     function waitForChartReady(timeout = 5000) {
       return new Promise((resolve, reject) => {
         const start = Date.now();
@@ -425,6 +440,9 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
           const btnLoad = document.getElementById('btnLoad');
           if(loadingOverlay) loadingOverlay.style.display = 'none';
           if(btnLoad) { btnLoad.disabled = false; btnLoad.innerText = 'Load'; }
+
+          updateLivePrice(symbol);
+          liveUpdateInterval = setInterval(()=>updateLivePrice(symbol), 15000);
       });
     }
 
