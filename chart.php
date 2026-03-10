@@ -63,8 +63,9 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
     <a href="scan_manual.php">🔍 Scanner BSJP/BPJP</a>
     <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
     <a href="ara_hunter.php">🚀 ARA Hunter</a>
-    <div class="top-menu-right">
-      <button id="btnSettings" class="btn-settings">⚙️ Settings & API Key</button>
+    <div class="top-menu-right" style="display: flex; gap: 10px;">
+      <a href="telegram_setting.php" style="background:#475569; padding: 8px 15px; border-radius: 5px; color: white; display:flex; align-items:center; height:18px;"><img src="https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" width="14" style="margin-right:5px;">Set Alert</a>
+      <button id="btnSettings" class="btn-settings" style="margin-top:0;">⚙️ Settings & API Key</button>
     </div>
   </nav>
 

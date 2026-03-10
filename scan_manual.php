@@ -55,10 +55,8 @@
         <a href="scan_manual.php" class="active">🔍 Scanner BSJP/BPJP</a>
         <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
         <a href="ara_hunter.php">🚀 ARA Hunter</a>
+        <a href="telegram_setting.php" style="margin-left:auto; background:#475569;"><img src="https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" width="14" style="vertical-align:middle;margin-right:5px;">Set Alert</a>
     </nav>
-
-    <h2>Scan Saham Manual (Berdasarkan Jam Bursa)</h2>
-    <p>Waktu saat ini (Server): <span id="current-time">Loading...</span> WIB</p>
 
     <div class="grid-container">
         <div class="card">

@@ -169,6 +169,7 @@ function get_mock_bandar($symbol, $volume) {
         <a href="scan_manual.php">🔍 Scanner BSJP/BPJP</a>
         <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
         <a href="ara_hunter.php">🚀 ARA Hunter</a>
+        <a href="telegram_setting.php" style="margin-left:auto; background:#475569;"><img src="https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" width="14" style="vertical-align:middle;margin-right:5px;">Set Alert</a>
     </nav>
     
     <h1>Dashboard Pasar IHSG</h1>
