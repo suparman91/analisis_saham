@@ -57,20 +57,30 @@
         <a href="ara_hunter.php">🚀 ARA Hunter</a>
         <a href="telegram_setting.php" style="margin-left:auto; background:#475569;"><img src="https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" width="14" style="vertical-align:middle;margin-right:5px;">Set Alert</a>
     </nav>
+    
+    <h2>Scanner Manual Multistrategi</h2>
+    <p>Waktu Server / Browser: <strong id="current-time" style="color:#007bff;">Loading...</strong></p>
 
-    <div class="grid-container">
+    <div class="grid-container" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
         <div class="card">
-            <h3>BPJP (Beli Pagi Jual Pagi)</h3>
+            <h3>BPJP (Scalping Pagi)</h3>
             <p>Jadwal Buka: 08:50 - 09:00 WIB (Senin - Jumat)</p>
             <button id="btn-bpjp" onclick="runScan('BPJP')" disabled>Jalankan Scan BPJP</button>
             <div id="status-bpjp" class="status">Tombol belum aktif</div>
         </div>
 
         <div class="card">
-            <h3>BSJP (Beli Sore Jual Pagi)</h3>
+            <h3>BSJP (Swing Sore)</h3>
             <p>Jadwal Buka: 15:30 - 16:00 WIB (Senin - Jumat)</p>
             <button id="btn-bsjp" onclick="runScan('BSJP')" disabled>Jalankan Scan BSJP</button>
             <div id="status-bsjp" class="status">Tombol belum aktif</div>
+        </div>
+
+        <div class="card" style="border-color: #3b82f6;">
+            <h3>Swing / Uptrend Tracker</h3>
+            <p>Jadwal: Kapan Saja (Data EOD / Tengah Malam)</p>
+            <button id="btn-swing" onclick="runScan('SWING')" style="background-color:#1e293b;">Jalankan Swing Scan</button>
+            <div id="status-swing" class="status active">Menu Terbuka 24/7</div>
         </div>
     </div>
 
@@ -182,41 +192,25 @@
         }
 
         function runScan(type) {
-            const btn = (type === 'BPJP') ? document.getElementById('btn-bpjp') : document.getElementById('btn-bsjp');
+            let btnId = 'btn-' + type.toLowerCase();
+            const btn = document.getElementById(btnId);
             const resultDiv = document.getElementById('result-container');
-            
+
             // Ubah tombol sebentar jadi loading
             const originalText = btn.innerText;
-            btn.innerText = "Sync & Loading...";
-            
+            btn.innerText = "Scanning...";
+
             // Siapkan div hasil dengan pesan loading
             resultDiv.style.display = 'block';
-            resultDiv.innerHTML = "<p><em>[Langkah 1/2]</em> Sedang menyinkronkan data realtime dari pasar. Mohon tunggu beberapa saat...</p>";
+            resultDiv.innerHTML = "<p>Menganalisis Algoritma <b>" + type + "</b> (Proses Cepat di Database)...</p>";
 
-            // Fetch realtime data SEBELUM discan (Update database ke kondisi hari/detik ini)
-            // KITA BATASI KE EMITEN LIQUID/LQ45 AGAR PROSESNYA SANGAT CEPAT
-            // Pastikan format ticker menggunakan format database Anda (.JK)
-            const liquidSymbols = "BBCA.JK,BBRI.JK,BBNI.JK,BMRI.JK,ASII.JK,TLKM.JK,GOTO.JK,ADRO.JK,AMMN.JK,AMRT.JK,UNTR.JK,KLBF.JK,CPIN.JK,ICBP.JK,INDF.JK,BRPT.JK,PTBA.JK,ITMG.JK,PGAS.JK,MEDC.JK";
-            
-            let syncUrl = 'fetch_realtime.php?symbols=' + liquidSymbols;
-            try { 
-                const gk = localStorage.getItem('goapi_key');
-                if (gk) syncUrl += '&goapi_key=' + encodeURIComponent(gk);
-            } catch(e){}
-            
-            fetch(syncUrl)
-                .then(res => res.text()) // bisa return json/text
-                .then(syncData => {
-                    // Update UI kalau sync beres
-                    resultDiv.innerHTML = "<p><em>[Langkah 2/2]</em> Sinkronisasi cepat (Liquid Stocks) berhasil! Mengeksekusi rumus dan menarik rekomendasi saham...</p>";
-                    
-                    // Lanjut Eksekusi Script Scan di DB yang sudah diupdate
-                    return fetch('scan_bpjs_bsjp.php?tipe=' + type);
-                })
+            // LANGSUNG eksekusi database tanpa nge-fetch sinkronisasi Live Yahoo yg bikin lama.
+            fetch('scan_bpjs_bsjp.php?tipe=' + type)
                 .then(response => response.text())
                 .then(data => {
                     resultDiv.innerHTML = data;
-                    btn.innerText = originalText;
+                    btn.innerText = "Selesai!";
+                    setTimeout(() => btn.innerText = originalText, 1500);
                 })
                 .catch(err => {
                     resultDiv.innerHTML = "<p style='color:red;'>Terjadi kesalahan: " + err + "</p>";

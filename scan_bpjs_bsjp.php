@@ -50,50 +50,105 @@ if (!$last_date) {
 $results = [];
 
 if ($tipe === 'BPJP') {
-    // Kriteria BPJP (Beli Pagi Jual Pagi): Momen Pagi (Scalper/DayTrade)
-    // DILONGGARKAN AGAR LEBIH BANYAK SAHAM MASUK SCANNER
-    // Logika Relaksasi: 
-    // 1. Close mendekati High (Toleransi selisih maks 1%) -> (High-Close)/Close <= 0.01
-    // 2. Harga naik minimal 2% (Sebelumnya 5%) -> ((Close-Open)/Open) >= 0.02
-    // 3. Volume > 100,000 (Sebelumnya 1 juta)
-    $sql = "SELECT p.symbol, s.name, p.open, p.high, p.low, p.close, p.volume, 
-                   ROUND(((p.close - p.open) / p.open) * 100, 2) as persen_kenaikan
-            FROM prices p
-            JOIN stocks s ON p.symbol = s.symbol
-            WHERE p.date = '$last_date'
-            AND (p.high - p.close) / p.close <= 0.01 
-            AND p.close > p.open
-            AND p.close >= 50
-            AND p.volume > 100000
-            AND ((p.close - p.open) / p.open) >= 0.02
-            ORDER BY persen_kenaikan DESC
-            LIMIT 10";
-            
+    // Kriteria BPJP PREMIUM (Beli Pagi Jual Pagi / Scalping Cepat)
+    // 1. Kondisi Uptrend (Close > MA-20)
+    // 2. Ada Lonjakan Volume / Smart Money (Volume > 200% dari rerata 5 hari)
+    // 3. Candle Solid High (Tolerance Ekor Atas 1.5%)
+    // 4. Harga > 50, Naik min 1.5% - 2%
+    $sql = "
+    WITH TargetDate AS ( SELECT MAX(date) as last_date FROM prices ),
+    LimitDates AS ( 
+        SELECT date FROM (SELECT DISTINCT date FROM prices ORDER BY date DESC LIMIT 60) tmp 
+    ),
+    CTE_Prices AS (
+        SELECT p.symbol, p.date, p.open, p.high, p.low, p.close, p.volume,
+               s.name,
+               ROUND(((p.close - p.open) / p.open) * 100, 2) as persen_kenaikan,
+               AVG(p.close) OVER (PARTITION BY p.symbol ORDER BY p.date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) as ma20,
+               AVG(p.volume) OVER (PARTITION BY p.symbol ORDER BY p.date ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING) as avg_vol_5
+        FROM prices p
+        JOIN LimitDates ld ON p.date = ld.date
+        JOIN stocks s ON p.symbol = s.symbol
+    )
+    SELECT * FROM CTE_Prices 
+    WHERE date = (SELECT last_date FROM TargetDate)
+      AND close > ma20 
+      AND volume >= (avg_vol_5 * 1.5)
+      AND (high - close) / close <= 0.015
+      AND close > open
+      AND close >= 50
+      AND volume > 500000
+      AND persen_kenaikan >= 1.5
+    ORDER BY persen_kenaikan DESC
+    LIMIT 10";
+
     $results = fetch_data($db_connection, $sql);
 
 } elseif ($tipe === 'BSJP') {
-    // Kriteria BSJP (Beli Sore Jual Pagi): Momen Penutupan Bursa
-    // Fokus pada candle akumulasi di sesi 2 (Strong Close menjelang tutup).
-    // Logika:
-    // 1. Candle Hijau (Close > Open) hari ini
-    // 2. Harga penutupan berada di 20% rentang teratas pada hari itu (Close near High). 
-    //    Rumus: (Close - Low) / (High - Low) >= 0.8
-    // 3. Harga naik minimal 2% hari ini (sudah konfirmasi uptrend/naik)
-    // 4. Volume lumayan besar (filter saham illiquid)
-    $sql = "SELECT p.symbol, s.name, p.open, p.high, p.low, p.close, p.volume,
-                   ROUND(((p.close - p.open) / p.open) * 100, 2) as persen_kenaikan
-            FROM prices p
-            JOIN stocks s ON p.symbol = s.symbol
-            WHERE p.date = '$last_date'
-            AND p.close > p.open
-            AND p.high > p.low
-            AND (p.close - p.low) / (p.high - p.low) >= 0.8 
-            AND p.close >= 50
-            AND p.volume > 1000000
-            AND ((p.close - p.open) / p.open) >= 0.02
-            ORDER BY p.volume DESC
-            LIMIT 10";
-            
+    // Kriteria BSJP PREMIUM (Beli Sore Jual Pagi / Swing Pendek)
+    // 1. Kondisi Uptrend (Close > MA-20)
+    // 2. Ada Lonjakan Volume Min 150% (Smart Money In)
+    // 3. Close Berada di 25% area teratas / menolak turun (Hammer / Bullish dominan)
+    $sql = "
+    WITH TargetDate AS ( SELECT MAX(date) as last_date FROM prices ),
+    LimitDates AS ( 
+        SELECT date FROM (SELECT DISTINCT date FROM prices ORDER BY date DESC LIMIT 60) tmp 
+    ),
+    CTE_Prices AS (
+        SELECT p.symbol, p.date, p.open, p.high, p.low, p.close, p.volume,
+               s.name,
+               ROUND(((p.close - p.open) / p.open) * 100, 2) as persen_kenaikan,
+               AVG(p.close) OVER (PARTITION BY p.symbol ORDER BY p.date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) as ma20,
+               AVG(p.volume) OVER (PARTITION BY p.symbol ORDER BY p.date ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING) as avg_vol_5
+        FROM prices p
+        JOIN LimitDates ld ON p.date = ld.date
+        JOIN stocks s ON p.symbol = s.symbol
+    )
+    SELECT * FROM CTE_Prices 
+    WHERE date = (SELECT last_date FROM TargetDate)
+      AND close > ma20
+      AND volume >= (avg_vol_5 * 1.5)
+      AND close > open
+      AND high > low
+      AND (close - low) / (high - low) >= 0.75
+      AND close >= 50
+      AND volume > 500000
+      AND persen_kenaikan >= 1.5
+    ORDER BY volume DESC
+    LIMIT 10";
+    $results = fetch_data($db_connection, $sql);
+
+} elseif ($tipe === 'SWING') {
+    // Kriteria SWING / UPTREND TRACKER (Gabungan EMA/SMA & Akumulasi Volume)
+    // 1. Double Uptrend Filter: Close > MA-20 DAN MA-20 > MA-50
+    // 2. Volume kuat rata-rata 20 harian: Volume >= (Rata2 volume 20 hari sebelumnya * 1.5)
+    // 3. Candle Solid / Breakout: Close > Open, nilai akumulasi tinggi
+    $sql = "
+    WITH TargetDate AS ( SELECT MAX(date) as last_date FROM prices ),
+    LimitDates AS ( 
+        SELECT date FROM (SELECT DISTINCT date FROM prices ORDER BY date DESC LIMIT 120) tmp 
+    ),
+    CTE_Prices AS (
+        SELECT p.symbol, p.date, p.open, p.high, p.low, p.close, p.volume,
+               s.name,
+               ROUND(((p.close - p.open) / p.open) * 100, 2) as persen_kenaikan,
+               AVG(p.close) OVER (PARTITION BY p.symbol ORDER BY p.date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) as ma20,
+               AVG(p.close) OVER (PARTITION BY p.symbol ORDER BY p.date ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) as ma50,
+               AVG(p.volume) OVER (PARTITION BY p.symbol ORDER BY p.date ROWS BETWEEN 19 PRECEDING AND 1 PRECEDING) as avg_vol_20
+        FROM prices p
+        JOIN LimitDates ld ON p.date = ld.date
+        JOIN stocks s ON p.symbol = s.symbol
+    )
+    SELECT * FROM CTE_Prices 
+    WHERE date = (SELECT last_date FROM TargetDate)
+      AND close > ma20
+      AND ma20 > ma50
+      AND volume >= (avg_vol_20 * 1.5)
+      AND close > open
+      AND close >= 50
+      AND volume > 500000
+    ORDER BY volume DESC
+    LIMIT 10";
     $results = fetch_data($db_connection, $sql);
 }
 

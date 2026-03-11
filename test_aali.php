@@ -1,0 +1,1 @@
+<?php $c = curl_init("https://query1.finance.yahoo.com/v8/finance/chart/AALI.JK?range=6mo&interval=1d"); curl_setopt($c, CURLOPT_RETURNTRANSFER, true); curl_setopt($c, CURLOPT_USERAGENT, "Mozilla/5.0"); $r = json_decode(curl_exec($c), true); echo "AALI close: " . count($r["chart"]["result"][0]["indicators"]["quote"][0]["close"]) . "\n"; ?>

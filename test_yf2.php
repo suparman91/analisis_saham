@@ -1,0 +1,1 @@
+<?php $c = curl_init("https://query1.finance.yahoo.com/v8/finance/chart/BBCA.JK?range=6mo&interval=1d"); curl_setopt($c, CURLOPT_RETURNTRANSFER, true); curl_setopt($c, CURLOPT_USERAGENT, "Mozilla/5.0"); $r = json_decode(curl_exec($c), true); echo "Timestamps: " . count($r["chart"]["result"][0]["timestamp"]) . "\n"; ?>

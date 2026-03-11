@@ -126,48 +126,110 @@ while ($row = $res_screener->fetch_assoc()) {
 // ==========================================
 // 2. SCAN BTJP / BPJP (Beli Pagi Jual Pagi)
 // ==========================================
-// Kriteria: Pagi (Scalper/DayTrade), toleransi selisih maks 1%, Harga naik minimal 2%, Volume > 100,000
+// Kriteria: Pagi (Scalper/DayTrade), Uptrend, Volume Spike, Close near High
 $bpjp_messages = [];
 $sql_bpjp = "
-    SELECT p.symbol, p.close, p.open, ROUND(((p.close - p.open) / p.open) * 100, 2) as persen_kenaikan
-    FROM prices p
-    JOIN (SELECT MAX(date) as last_date FROM prices) latest ON p.date = latest.last_date
-    WHERE (p.high - p.close) / p.close <= 0.01
-      AND p.close > p.open
-      AND p.close >= 50
-      AND p.volume > 100000
-      AND ((p.close - p.open) / p.open) >= 0.02
+    WITH TargetDate AS ( SELECT MAX(date) as max_date FROM prices ),
+    LimitDates AS ( 
+        SELECT date FROM (SELECT DISTINCT date FROM prices ORDER BY date DESC LIMIT 60) tmp 
+    ),
+    CTE_Prices AS (
+        SELECT p.symbol, p.date, p.open, p.high, p.low, p.close, p.volume,
+               ROUND(((p.close - p.open) / p.open) * 100, 2) as persen_kenaikan,
+               AVG(p.close) OVER (PARTITION BY p.symbol ORDER BY p.date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) as ma20,
+               AVG(p.volume) OVER (PARTITION BY p.symbol ORDER BY p.date ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING) as avg_vol_5
+        FROM prices p
+        JOIN LimitDates ld ON p.date = ld.date
+    )
+    SELECT * FROM CTE_Prices 
+    WHERE date = (SELECT max_date FROM TargetDate)
+      AND close > ma20 
+      AND volume >= (avg_vol_5 * 1.5)
+      AND (high - close) / close <= 0.015
+      AND close > open
+      AND close >= 50
+      AND volume > 500000
+      AND persen_kenaikan >= 1.5
     ORDER BY persen_kenaikan DESC
     LIMIT 3
 ";
 $res_bpjp = $mysqli->query($sql_bpjp);
 while ($row = $res_bpjp->fetch_assoc()) {
     $sym = str_replace('.JK', '', $row['symbol']);
-    $bpjp_messages[] = "🔹 <b>{$sym}</b> (Rp".number_format($row['close'],0,",",".").") - Naik: +{$row['persen_kenaikan']}%";
+    $bpjp_messages[] = "🔹 <b>{$sym}</b> (Rp".number_format($row['close'],0,",",".").") - Naik: +{$row['persen_kenaikan']}% [Uptrend & Volume 🚀]";
 }
 
 // ==========================================
 // 3. SCAN BSJP (Beli Sore Jual Pagi)
 // ==========================================
-// Kriteria: Closing mendakat High, naik min 2%, volume besar
+// Kriteria: Closing mendekati High, Uptrend, lonjakan volume min 150%
 $bsjp_messages = [];
 $sql_bsjp = "
-    SELECT p.symbol, p.close, p.open, ROUND(((p.close - p.open) / p.open) * 100, 2) as persen_kenaikan
-    FROM prices p
-    JOIN (SELECT MAX(date) as last_date FROM prices) latest ON p.date = latest.last_date
-    WHERE p.close > p.open
-      AND p.high > p.low
-      AND (p.close - p.low) / (p.high - p.low) >= 0.8
-      AND p.close >= 50
-      AND p.volume > 1000000
-      AND ((p.close - p.open) / p.open) >= 0.02
-    ORDER BY p.volume DESC
+    WITH TargetDate AS ( SELECT MAX(date) as max_date FROM prices ),
+    LimitDates AS ( 
+        SELECT date FROM (SELECT DISTINCT date FROM prices ORDER BY date DESC LIMIT 60) tmp 
+    ),
+    CTE_Prices AS (
+        SELECT p.symbol, p.date, p.open, p.high, p.low, p.close, p.volume,
+               ROUND(((p.close - p.open) / p.open) * 100, 2) as persen_kenaikan,
+               AVG(p.close) OVER (PARTITION BY p.symbol ORDER BY p.date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) as ma20,
+               AVG(p.volume) OVER (PARTITION BY p.symbol ORDER BY p.date ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING) as avg_vol_5
+        FROM prices p
+        JOIN LimitDates ld ON p.date = ld.date
+    )
+    SELECT * FROM CTE_Prices 
+    WHERE date = (SELECT max_date FROM TargetDate)
+      AND close > ma20
+      AND volume >= (avg_vol_5 * 1.5)
+      AND close > open
+      AND high > low
+      AND (close - low) / (high - low) >= 0.75
+      AND close >= 50
+      AND volume > 500000
+      AND persen_kenaikan >= 1.5
+    ORDER BY volume DESC
     LIMIT 3
 ";
 $res_bsjp = $mysqli->query($sql_bsjp);
 while ($row = $res_bsjp->fetch_assoc()) {
     $sym = str_replace('.JK', '', $row['symbol']);
-    $bsjp_messages[] = "🔸 <b>{$sym}</b> (Rp".number_format($row['close'],0,",",".").") - Naik: +{$row['persen_kenaikan']}%";
+    $bsjp_messages[] = "🔸 <b>{$sym}</b> (Rp".number_format($row['close'],0,",",".").") - Naik: +{$row['persen_kenaikan']}% [Akumulasi Sore 🔨]";
+}
+
+// ==========================================
+// 3b. SCAN SWING / UPTREND TRACKER
+// ==========================================
+$swing_messages = [];
+$sql_swing = "
+    WITH TargetDate AS ( SELECT MAX(date) as max_date FROM prices ),
+    LimitDates AS ( 
+        SELECT date FROM (SELECT DISTINCT date FROM prices ORDER BY date DESC LIMIT 120) tmp 
+    ),
+    CTE_Prices AS (
+        SELECT p.symbol, p.date, p.open, p.high, p.low, p.close, p.volume,
+               AVG(p.close) OVER (PARTITION BY p.symbol ORDER BY p.date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) as ma20,
+               AVG(p.close) OVER (PARTITION BY p.symbol ORDER BY p.date ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) as ma50,
+               AVG(p.volume) OVER (PARTITION BY p.symbol ORDER BY p.date ROWS BETWEEN 19 PRECEDING AND 1 PRECEDING) as avg_vol_20
+        FROM prices p
+        JOIN LimitDates ld ON p.date = ld.date
+    )
+    SELECT * FROM CTE_Prices 
+    WHERE date = (SELECT max_date FROM TargetDate)
+      AND close > ma20
+      AND ma20 > ma50
+      AND volume >= (avg_vol_20 * 1.5)
+      AND close > open
+      AND close >= 50
+      AND volume > 500000
+    ORDER BY volume DESC
+    LIMIT 3
+";
+$res_swing = $mysqli->query($sql_swing);
+if($res_swing) {
+    while ($row = $res_swing->fetch_assoc()) {
+        $sym = str_replace('.JK', '', $row['symbol']);
+        $swing_messages[] = "📈 <b>{$sym}</b> (Rp".number_format($row['close'],0,",",".").") - [Uptrend & Volume Breakout Layer]";
+    }
 }
 
 // ==========================================
@@ -187,12 +249,15 @@ if ($res_stockpick) {
 // ==========================================
 // BUILD FINAL MESSAGE
 // ==========================================
-if (count($ara_messages) > 0 || count($bpjp_messages) > 0 || count($bsjp_messages) > 0 || count($stockpick_messages) > 0) {
+if (count($ara_messages) > 0 || count($bpjp_messages) > 0 || count($bsjp_messages) > 0 || count($stockpick_messages) > 0 || count($swing_messages) > 0) {
     $title = "🚨 <b>REPORT SAHAM OTOMATIS</b> 🚨\n\n";
     $final_message = $title;
-    
+
     if (count($stockpick_messages) > 0) {
         $final_message .= "🤖 <b>AI STOCKPICKS TERBARU</b>\n" . implode("\n", $stockpick_messages) . "\n\n";
+    }
+    if (count($swing_messages) > 0) {
+        $final_message .= "🌊 <b>POTENSI SWING / UPTREND TRACKER</b>\n" . implode("\n", $swing_messages) . "\n\n";
     }
     if (count($bsjp_messages) > 0) {
         $final_message .= "🌅 <b>POTENSI BSJP (Beli Sore Jual Pagi)</b>\n" . implode("\n", $bsjp_messages) . "\n\n";

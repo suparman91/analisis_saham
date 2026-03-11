@@ -282,8 +282,41 @@ function get_mock_bandar($symbol, $volume) {
     </div>
 </div>
 
-<!-- Script untuk auto-refresh halaman Dashboard setiap 3 menit agar data selalu terlihat up-to-date -->
+<!-- Floating Banner Auto-Updater -->
+<div id="auto-update-banner" style="display:none; position:fixed; bottom:20px; right:20px; background-color:#ffd700; color:#000; padding:15px 25px; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.2); font-weight:bold; z-index:9999; border: 2px solid #e6c200;">
+    <span id="update-text">⏳ Sedang mengUPDATE Harga EOD terbaru ke database (Otomatis). Mohon tunggu sebentar...</span>
+</div>
+
 <script>
+    // Fitur Auto Update harga saham (Max 1x Sehari) tanpa memberatkan browser / UI.
+    document.addEventListener("DOMContentLoaded", function() {
+        const today = new Date().toISOString().split('T')[0];
+        const lastUpdate = localStorage.getItem('last_update_daily');
+        
+        // Pengecekan Cache Lokal vs Tanggal Hari Ini. Jika belum update:
+        if (lastUpdate !== today) {
+            const banner = document.getElementById('auto-update-banner');
+            banner.style.display = 'block'; // Tampilkan Mode Update
+
+            fetch('ajax_update.php')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'success' || data.status === 'already_updated') {
+                        document.getElementById('update-text').innerText = "✅ Update EOD Berhasil! Harga hari ini sudah lengkap.";
+                        // Set tanda bahwa hari ini sudah berhasil
+                        localStorage.setItem('last_update_daily', today);
+                        
+                        // Menghilangkan banner setelah 3 detik
+                        setTimeout(() => { banner.style.display = 'none'; }, 3000);
+                    }
+                })
+                .catch(err => {
+                    document.getElementById('update-text').innerText = "⚠️ Gagal melakukan auto-update. Coba lagi nanti.";
+                    setTimeout(() => { banner.style.display = 'none'; }, 5000);
+                });
+        }
+    });
+
     setTimeout(function() {
         window.location.reload();
     }, 180000); // 180000 milidetik = 3 menit
