@@ -1,1 +1,0 @@
-<?php $ch = curl_init("https://api.goapi.io/stock/idx/companies?api_key=f29dc087-640b-5b81-df7c-aee75f5e"); curl_setopt($ch, CURLOPT_RETURNTRANSFER, true); $resp=curl_exec($ch); echo substr($resp, 0, 500);

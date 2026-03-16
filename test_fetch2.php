@@ -1,1 +1,0 @@
-<?php $s = microtime(true); $_GET['symbols'] = 'BBCA.JK,BBRI.JK,BBNI.JK,BMRI.JK,ASII.JK,TLKM.JK,GOTO.JK'; ob_start(); require 'fetch_realtime.php'; ob_end_clean(); echo 'Time: ' . (microtime(true) - $s) . ' seconds'; ?>

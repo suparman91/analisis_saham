@@ -1,1 +1,0 @@
-<?php $c = curl_init("https://query1.finance.yahoo.com/v8/finance/spark?symbols=BBCA.JK&range=1d&interval=1d"); curl_setopt($c, CURLOPT_RETURNTRANSFER,true); curl_setopt($c, CURLOPT_USERAGENT, "Mozilla/5.0"); echo curl_exec($c); ?>

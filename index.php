@@ -3,14 +3,17 @@ require_once __DIR__ . '/db.php';
 
 $mysqli = db_connect();
 
-// Get the two most recent distinct dates in the prices table
-$resDates = $mysqli->query("SELECT date, count(*) as cnt FROM prices GROUP BY date HAVING cnt > 500 ORDER BY date DESC LIMIT 2");
+// If today has less than 200 stocks updated (e.g. intraday partial update or weekend anomaly), use the last two complete dates
+$resDates = $mysqli->query("SELECT date, count(*) as cnt FROM prices GROUP BY date HAVING cnt > 200 ORDER BY date DESC LIMIT 2");
 $dates = [];
 while ($r = $resDates->fetch_assoc()) {
     $dates[] = $r['date'];
 }
 $today = $dates[0] ?? date('Y-m-d');
 $yesterday = $dates[1] ?? date('Y-m-d', strtotime('-1 day'));
+
+// Fallback logic for weekend/holiday: if $today and $yesterday prices are identical or returning no >5% movers
+// because market is closed, user gets empty tables. We should ensure we always have some data to show.
 
 // Top Gainers and Losers Query
 $sqlMarket = "
@@ -55,9 +58,14 @@ usort($gainers, fn($a, $b) => $b['pct_change'] <=> $a['pct_change']);
 usort($losers, fn($a, $b) => $a['pct_change'] <=> $b['pct_change']);
 usort($volumes, fn($a, $b) => $b['volume'] <=> $a['volume']);
 
-// If no gainers/losers > 5%, just get the top 5 positive/negative
+// If no gainers/losers > 5%, fallback to showing top positive/negative stocks (e.g. on weekends where moves are tiny)
 if (empty($gainers)) {
+    // try to get at least > 0
     $gainers = array_filter($all_stocks, fn($s) => $s['pct_change'] > 0);
+    // if still empty (everything is 0%), just take the any top 10 stocks excluding large drops so table isn't empty
+    if (empty($gainers)) {
+        $gainers = array_filter($all_stocks, fn($s) => $s['pct_change'] >= 0);
+    }
     usort($gainers, fn($a, $b) => $b['pct_change'] <=> $a['pct_change']);
     $gainers = array_slice($gainers, 0, 10);
     $gainer_title = "Top Gainers (Hari Ini)";
@@ -67,11 +75,15 @@ if (empty($gainers)) {
 
 if (empty($losers)) {
     $losers = array_filter($all_stocks, fn($s) => $s['pct_change'] < 0);
+    // if still empty, take some stocks that aren't gainers
+    if (empty($losers)) {
+        $losers = array_filter($all_stocks, fn($s) => $s['pct_change'] <= 0);
+    }
     usort($losers, fn($a, $b) => $a['pct_change'] <=> $b['pct_change']);
     $losers = array_slice($losers, 0, 10);
     $loser_title = "Top Losers (Hari Ini)";
 } else {
-    $loser_title = "Saham Turun > 5%";
+    $loser_title = "Saham Turun < 5%";
 }
 
 // Limit arrays

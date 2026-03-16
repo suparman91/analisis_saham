@@ -1,0 +1,18 @@
+<?php
+// We should check if the prices have `pct_change` correctly handled. In `index.php`
+
+// The problem is on weekends, Yahoo Finance often returns `volume=0` and the same `close` price for the current day. 
+// The user updated data on a weekend/holiday, so all current prices are identical to yesterday"s.
+// Therefore NO stock has `pct_change >= 5` or `<= -5`.
+// They ALL have `pct_change = 0`.
+
+// Then the fallback triggers:
+// if (empty($gainers)) {
+//     $gainers = array_filter($all_stocks, fn($s) => $s["pct_change"] > 0);
+// BUT none of them are `> 0`. They are equal to 0!
+// So $gainers is still empty! `Tidak ada data`.
+
+// To fix this UI display issue, if the market was flat (weekend), we should just fall back to ANY stocks, or show `volume > 0` stocks, 
+// or change the logic to handle 0% change gracefully instead of showing empty lists.
+// OR we should change the condition to handle >= 0 instead of > 0.
+

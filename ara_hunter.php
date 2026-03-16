@@ -167,6 +167,69 @@ while ($row = $res_screener->fetch_assoc()) {
     }
 }
 
+// -------- YF LIVE FETCH START --------
+$all_syms = [];
+foreach ($saham_ara as $s) {
+    if (!empty($s['symbol'])) {
+        $all_syms[] = urlencode($s['symbol'] . ".JK");
+    }
+}
+
+if (!empty($all_syms)) {
+    $batches = array_chunk($all_syms, 50);
+    $live_prices = [];
+    
+    foreach ($batches as $batch) {
+        $sym_str = implode(',', $batch);
+        $yahoo_url = "https://query1.finance.yahoo.com/v7/finance/spark?symbols=" . $sym_str . "&range=1d&interval=1m";
+        $ch = curl_init($yahoo_url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0');
+        $yahoo_res = curl_exec($ch);
+        curl_close($ch);
+        
+        if ($yahoo_res) {
+            $ydata = json_decode($yahoo_res, true);
+            if (isset($ydata['spark']['result'])) {
+                foreach ($ydata['spark']['result'] as $r) {
+                    $sym = str_replace('.JK', '', $r['symbol']);
+                    if (isset($r['response'][0]['indicators']['quote'][0]['close'])) {
+                        $closes = $r['response'][0]['indicators']['quote'][0]['close'];
+                        $valid_closes = array_filter($closes, function($val) {
+                            return $val !== null;
+                        });
+                        if (!empty($valid_closes)) {
+                            $live_prices[$sym] = end($valid_closes);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    foreach ($saham_ara as &$s) {
+        if (isset($live_prices[$s['symbol']])) {
+            $live_price = $live_prices[$s['symbol']];
+            $s['close'] = $live_price;
+            
+            $ara_limit = $s['ara'];
+            if ($ara_limit > 0) {
+                $pct_to_ara = (($ara_limit - $live_price) / $ara_limit) * 100;
+                $s['distance'] = round($pct_to_ara, 2);
+                
+                if ($live_price >= $ara_limit) {
+                    $s['status'] = 'KUNCI ARA';
+                    $s['hit_ara'] = true;
+                } elseif ($live_price >= $s['prev'] && $pct_to_ara <= 3 && $pct_to_ara >= 0) {
+                    $s['status'] = 'MENGINCAR ARA';
+                }
+            }
+        }
+    }
+    unset($s);
+}
+// -------- YF LIVE FETCH END --------
+
 usort($saham_ara, function($a, $b) {
     if ($a['status'] === 'KUNCI ARA' && $b['status'] !== 'KUNCI ARA') return -1;
     if ($b['status'] === 'KUNCI ARA' && $a['status'] !== 'KUNCI ARA') return 1;
@@ -340,7 +403,7 @@ usort($saham_ara, function($a, $b) {
                                       <?php elseif ($s["status"] === "MENGINCAR ARA"): ?>
                                         <span class="badge badge-mendekati" onclick="showDetail(<?= $detail_json ?>)">🔥 MENUJU ARA</span>
                                       <?php else: ?>
-                                        <span class="badge badge-ara" style="background:#0ea5e9;" onclick="showDetail(<?= $detail_json ?>)">💡 POTENSI BESOK</span>
+                                        <span class="badge badge-ara" style="background:#0ea5e9;" onclick="showDetail(<?= $detail_json ?>)">💡 POTENSI <?= strtoupper(date('d M', strtotime('+1 weekday'))) ?></span>
                                       <?php endif; ?>
                                   </td>
                               </tr>

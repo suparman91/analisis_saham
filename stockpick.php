@@ -2,8 +2,12 @@
 require_once __DIR__ . "/db.php";
 $mysqli = db_connect();
 
-// Auto add strategy column if missing (silent fail if already exists)
+// Auto add strategy & updated_at columns if missing (silent fail if already exists)
 $mysqli->query("ALTER TABLE ai_stockpicks ADD COLUMN strategy VARCHAR(20) DEFAULT 'day'");
+$mysqli->query("ALTER TABLE ai_stockpicks ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+
+// Auto delete picks that have failed and have stayed failed for >= 3 days
+$mysqli->query("DELETE FROM ai_stockpicks WHERE status = 'FAILED' AND DATEDIFF(NOW(), updated_at) >= 3");
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
     if (isset($_POST["action"]) && $_POST["action"] == "add") {
@@ -44,9 +48,9 @@ while ($pr = $resPrices->fetch_assoc()) {
 }
 
 // ==== LIVE PRICE API INJECTION ====
-// Secara otomatis fetch harga sangat live dari API untuk saham yg berstatus PENDING
+// Secara otomatis fetch harga sangat live dari API untuk semua saham di tracker
 $pending_symbols = [];
-$resPending = $mysqli->query("SELECT DISTINCT symbol FROM ai_stockpicks WHERE status='PENDING'");
+$resPending = $mysqli->query("SELECT DISTINCT symbol FROM ai_stockpicks");
 while ($row = $resPending->fetch_assoc()) {
     $pending_symbols[] = $row['symbol'];
 }

@@ -1,1 +1,0 @@
-<?php $c = curl_init("https://query1.finance.yahoo.com/v8/finance/chart/BBCA.JK?range=6mo&interval=1d"); curl_setopt($c, CURLOPT_RETURNTRANSFER, true); curl_setopt($c, CURLOPT_USERAGENT, "Mozilla/5.0"); echo substr(curl_exec($c), 0, 500); ?>

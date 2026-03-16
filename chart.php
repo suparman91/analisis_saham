@@ -245,10 +245,32 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
               if (chart && chart.data && chart.data.datasets && chart.data.datasets[0] && chart.data.datasets[0].data) {
                   const dataArr = chart.data.datasets[0].data;
                   if (dataArr.length > 0) {
-                      const lastCandle = dataArr[dataArr.length - 1];
-                      lastCandle.c = p.price;
-                      if (p.price > lastCandle.h) lastCandle.h = p.price;
-                      if (p.price < lastCandle.l) lastCandle.l = p.price;
+                        let dtNow = new Date();
+                        if (p.time) {
+                            dtNow = new Date(p.time * 1000);
+                        } else if (p.raw && p.raw.t) {
+                            dtNow = new Date(p.raw.t * 1000);
+                        }
+                        const lastCandle = dataArr[dataArr.length - 1];
+                        const lastCandleDate = new Date(lastCandle.x);
+                        
+                        // Check if the last candle is from today or not
+                        if (dtNow.getDate() === lastCandleDate.getDate() && dtNow.getMonth() === lastCandleDate.getMonth() && dtNow.getFullYear() === lastCandleDate.getFullYear()) {
+                            // Update current day candle
+                            lastCandle.c = p.price;
+                            if (p.price > lastCandle.h) lastCandle.h = p.price;
+                            if (p.price < lastCandle.l) lastCandle.l = p.price;
+                        } else {
+                            // Target open price either from p.open or last day's close
+                            let openP = (p.open && !isNaN(p.open) && p.open > 0) ? Number(p.open) : lastCandle.c;
+                            dataArr.push({
+                                x: dtNow.valueOf(),
+                                o: openP,
+                                h: Math.max(openP, p.price),
+                                l: Math.min(openP, p.price),
+                                c: p.price
+                            });
+                        }
                       chart.update('none');
                   }
               }

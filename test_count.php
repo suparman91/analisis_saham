@@ -1,1 +1,0 @@
-<?php require 'db.php'; $db = db_connect(); $r = $db->query('SELECT COUNT(*) as c FROM prices'); $row = $r->fetch_assoc(); echo $row['c']; ?>
