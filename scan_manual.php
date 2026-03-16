@@ -55,6 +55,8 @@
         <a href="scan_manual.php" class="active">🔍 Scanner BSJP/BPJP</a>
         <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
         <a href="ara_hunter.php">🚀 ARA Hunter</a>
+          <a href="arb_hunter.php">&#x1F4C9; ARB Hunter</a>
+        <a href="portfolio.php">&#x1F4BC; Autopilot Portofolio</a>
         <a href="telegram_setting.php" style="margin-left:auto; background:#475569;"><img src="https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" width="14" style="vertical-align:middle;margin-right:5px;">Set Alert</a>
     </nav>
     

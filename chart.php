@@ -2,7 +2,7 @@
 require_once __DIR__ . '/db.php';
 $mysqli = db_connect();
 $stocks = [];
-$res = $mysqli->query('SELECT symbol,name FROM stocks ORDER BY symbol');
+  $res = $mysqli->query('SELECT symbol,name,notation FROM stocks ORDER BY symbol');
 while ($r = $res->fetch_assoc()) $stocks[] = $r;
 ?>
 <!doctype html>
@@ -63,6 +63,8 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
     <a href="scan_manual.php">🔍 Scanner BSJP/BPJP</a>
     <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
     <a href="ara_hunter.php">🚀 ARA Hunter</a>
+          <a href="arb_hunter.php">&#x1F4C9; ARB Hunter</a>
+        <a href="portfolio.php">&#x1F4BC; Autopilot Portofolio</a>
     <div class="top-menu-right" style="display: flex; gap: 10px;">
       <a href="telegram_setting.php" style="background:#475569; padding: 8px 15px; border-radius: 5px; color: white; display:flex; align-items:center; height:18px;"><img src="https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" width="14" style="margin-right:5px;">Set Alert</a>
       <button id="btnSettings" class="btn-settings" style="margin-top:0;">⚙️ Settings & API Key</button>
@@ -73,7 +75,10 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
     <strong style="margin-right:10px;">Pilih Saham:</strong>
     <select id="symbol" style="min-width: 250px; padding: 6px; border-radius: 4px; border: 1px solid #cbd5e1;">
       <option value="">-- Pilih Saham --</option>
-      <?php foreach ($stocks as $s) echo '<option value="'.$s['symbol'].'">'.$s['symbol'].' - '.$s['name'].'</option>'; ?>
+        <?php foreach ($stocks as $s) {
+          $not = !empty($s['notation']) ? " [{$s['notation']}]" : "";
+          echo '<option value="'.$s['symbol'].'">'.$s['symbol'].' - '.$s['name'].$not.'</option>';
+        } ?>
     </select>
     <button id="btnLoad" style="background:#0d6efd; color:#fff; border:none; padding:8px 16px; border-radius:4px; font-weight:bold; cursor:pointer;">Load Data</button>
     <button id="btnResetZoom" style="margin-left:12px; padding:8px 16px; border-radius:4px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">🔄 Reset Zoom</button>
@@ -146,6 +151,8 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
     <div class="indicators">
       <div class="ind-col">
         <div><strong>Latest price:</strong> <span id="latestPrice">-</span></div>
+        <div><strong>Open price:</strong> <span id="openPrice">-</span></div>
+        <div><strong>Daily Change:</strong> <span id="changePct">-</span></div>
         <div><strong>Date:</strong> <span id="latestDate">-</span></div>
         <div><strong>Price source:</strong> <span id="latestSource" class="badge hold">-</span></div>
       </div>
@@ -208,6 +215,21 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
             const p = rt.data[symbol];
             if (p.price && !isNaN(p.price)) {
               document.getElementById('latestPrice').innerText = Number(p.price).toLocaleString();
+              let openEl = document.getElementById('openPrice');
+              let openP = (p.open && !isNaN(p.open) && p.open > 0) ? Number(p.open) : null;
+              if (!openP) {
+                  // Fallback to reading the open price from history chart if not in realtime payload
+                  openP = openEl.innerText !== '-' ? Number(openEl.innerText.replace(/,/g, '')) : null;
+              }
+              if (openP) {
+                  let closeP = Number(p.price);
+                  let diff = closeP - openP;
+                  let pct = (diff / openP) * 100;
+                  openEl.innerText = openP.toLocaleString();
+                  let cEl = document.getElementById('changePct');
+                  cEl.innerText = (diff > 0 ? '+' : '') + diff.toLocaleString() + ' (' + (diff > 0 ? '+' : '') + pct.toFixed(2) + '%)';
+                  cEl.style.color = diff > 0 ? 'green' : (diff < 0 ? 'red' : 'black');
+              }
 
               if (p.time) {
                 const dt = new Date(p.time * 1000);
@@ -340,6 +362,20 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
         sigEl.className = 'badge ' + (signalText.indexOf('BUY')!==-1 ? 'buy' : signalText.indexOf('SELL')!==-1 ? 'sell' : 'hold');
         // latest price/date (from DB by default)
         document.getElementById('latestPrice').innerText = data.latest ? Number(data.latest.close).toLocaleString() : '-';
+        if (data.latest && data.latest.open) {
+            let openP = Number(data.latest.open);
+            let closeP = Number(data.latest.close);
+            let diff = closeP - openP;
+            let pct = (diff / openP) * 100;
+            document.getElementById('openPrice').innerText = openP.toLocaleString();
+            let cEl = document.getElementById('changePct');
+            cEl.innerText = (diff > 0 ? '+' : '') + diff.toLocaleString() + ' (' + (diff > 0 ? '+' : '') + pct.toFixed(2) + '%)';
+            cEl.style.color = diff > 0 ? 'green' : (diff < 0 ? 'red' : 'black');
+        } else {
+            document.getElementById('openPrice').innerText = '-';
+            document.getElementById('changePct').innerText = '-';
+            document.getElementById('changePct').style.color = 'black';
+        }
         document.getElementById('latestDate').innerText = data.latest ? data.latest.date : '-';
         // default source is cached (DB)
         const srcEl = document.getElementById('latestSource');

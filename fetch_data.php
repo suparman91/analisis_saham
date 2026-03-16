@@ -15,7 +15,7 @@ if (!$type || !$symbol || !$file) {
 $mysqli = db_connect();
 
 if ($type === 'prices') {
-    $stmt = $mysqli->prepare("INSERT INTO prices (symbol,date,open,high,low,close,volume) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE open=VALUES(open), high=VALUES(high), low=VALUES(low), close=VALUES(close), volume=VALUES(volume)");
+    $stmt = $mysqli->prepare("INSERT INTO prices (symbol,date,open,high,low,close,volume) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE open=IF(open > 0, open, VALUES(open)), high=IF(VALUES(high) > high, VALUES(high), high), low=IF(VALUES(low) > 0 AND VALUES(low) < low, VALUES(low), low), close=VALUES(close), volume=IF(VALUES(volume) > volume, VALUES(volume), volume)");
     if (($handle = fopen($file, 'r')) !== false) {
         $row = 0;
         while (($data = fgetcsv($handle, 1000, ',')) !== false) {

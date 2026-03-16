@@ -260,7 +260,7 @@ function insert_price_to_db($mysqli, $symbol, $price, $open = null, $high = null
     $closeVal = $price;
     $volVal = ($volume !== null && is_numeric($volume)) ? (int)$volume : 0;
 
-    $sql = "INSERT INTO prices (symbol, date, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE open=VALUES(open), high=VALUES(high), low=VALUES(low), close=VALUES(close), volume=VALUES(volume)";
+    $sql = "INSERT INTO prices (symbol, date, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE open=IF(open > 0, open, VALUES(open)), high=IF(VALUES(high) > high, VALUES(high), high), low=IF(VALUES(low) > 0 AND VALUES(low) < low, VALUES(low), low), close=VALUES(close), volume=IF(VALUES(volume) > volume, VALUES(volume), volume)";
     $stmt = $mysqli->prepare($sql);
     if (!$stmt) return ['saved'=>false,'error'=>'prepare_failed','mysqli_error'=>$mysqli->error];
 

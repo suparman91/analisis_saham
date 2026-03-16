@@ -4,7 +4,7 @@ require_once __DIR__ . '/db.php';
 $mysqli = db_connect();
 
 // Get the two most recent distinct dates in the prices table
-$resDates = $mysqli->query("SELECT DISTINCT date FROM prices ORDER BY date DESC LIMIT 2");
+$resDates = $mysqli->query("SELECT date, count(*) as cnt FROM prices GROUP BY date HAVING cnt > 500 ORDER BY date DESC LIMIT 2");
 $dates = [];
 while ($r = $resDates->fetch_assoc()) {
     $dates[] = $r['date'];
@@ -17,6 +17,7 @@ $sqlMarket = "
 SELECT 
     p1.symbol, 
     s.name, 
+    s.notation,
     p1.close, 
     p2.close as prev_close,
     ((p1.close - p2.close) / p2.close * 100) as pct_change,
@@ -76,11 +77,19 @@ if (empty($losers)) {
 // Limit arrays
 $top_volume = array_slice($volumes, 0, 10);
 
-// For Multibagger: Price <= 200
-$potential_multibaggers = array_filter($all_stocks, fn($s) => $s['close'] <= 200 && $s['volume'] > 0);
-usort($potential_multibaggers, fn($a, $b) => $b['volume'] <=> $a['volume']); // Liquid cheap stocks
-$potential_multibaggers = array_slice($potential_multibaggers, 0, 8);
+  function format_symbol_badge($s, $color="#000") {
+    $html = '<strong><a href="chart.php?symbol=' . urlencode($s['symbol']) . '" target="_blank" style="text-decoration:none; color: ' . htmlspecialchars($color) . ';">' . htmlspecialchars($s['symbol']) . '</a></strong>';
+    if (!empty($s['notation'])) {
+        $html .= ' <span class="badge notation-badge" title="Notasi Khusus: ' . htmlspecialchars($s['notation']) . '">' . htmlspecialchars($s['notation']) . '</span>';
+    }
+    return $html;
+}
 
+// For Multibagger: All stocks with strong momentum
+  $potential_multibaggers = array_filter($all_stocks, fn($s) => $s['volume'] > 2000000 && $s['pct_change'] >= 3);
+  // Sort by highest volume among gaining stocks as strong momentum proxy
+  usort($potential_multibaggers, fn($a, $b) => $b['volume'] <=> $a['volume']); 
+  $potential_multibaggers = array_slice($potential_multibaggers, 0, 8);
 
 // For Top Buy/Sell Asing & Lokal (Bandar Flow Simulation)
 // Real broker summary usually needs IDX direct feed, generating deterministic mock data for display.
@@ -156,7 +165,8 @@ function get_mock_bandar($symbol, $volume) {
     .badge.buy { background:#198754; }
     .badge.sell { background:#dc3545; }
     .badge.hold { background:#6c757d; }
-    
+    .badge.notation-badge { background:#ffc107; color:#000; font-size:9px; padding:2px 4px; margin-left:4px; vertical-align:super; }
+
     .full-width { grid-column: 1 / -1; }
   </style>
 </head>
@@ -169,6 +179,8 @@ function get_mock_bandar($symbol, $volume) {
         <a href="scan_manual.php">🔍 Scanner BSJP/BPJP</a>
         <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
         <a href="ara_hunter.php">🚀 ARA Hunter</a>
+          <a href="arb_hunter.php">&#x1F4C9; ARB Hunter</a>
+        <a href="portfolio.php">&#x1F4BC; Autopilot Portofolio</a>
         <a href="telegram_setting.php" style="margin-left:auto; background:#475569;"><img src="https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" width="14" style="vertical-align:middle;margin-right:5px;">Set Alert</a>
     </nav>
     
@@ -187,7 +199,7 @@ function get_mock_bandar($symbol, $volume) {
                 </tr>
                 <?php foreach ($gainers as $s): ?>
                 <tr>
-                    <td><strong><a href="chart.php?symbol=<?= urlencode($s['symbol']) ?>" target="_blank" style="text-decoration:none; color:#198754;"><?= $s['symbol'] ?></a></strong></td>
+                    <td><?= format_symbol_badge($s, "#198754") ?></td>
                     <td class="text-right"><?= number_format($s['close']) ?></td>
                     <td class="text-right text-green">+<?= number_format($s['pct_change'], 2) ?>%</td>
                 </tr>
@@ -207,7 +219,7 @@ function get_mock_bandar($symbol, $volume) {
                 </tr>
                 <?php foreach ($losers as $s): ?>
                 <tr>
-                    <td><strong><a href="chart.php?symbol=<?= urlencode($s['symbol']) ?>" target="_blank" style="text-decoration:none; color:#dc3545;"><?= $s['symbol'] ?></a></strong></td>
+                    <td><?= format_symbol_badge($s, "#dc3545") ?></td>
                     <td class="text-right"><?= number_format($s['close']) ?></td>
                     <td class="text-right text-red"><?= number_format($s['pct_change'], 2) ?>%</td>
                 </tr>
@@ -218,8 +230,8 @@ function get_mock_bandar($symbol, $volume) {
 
         <!-- Rekomendasi Multibagger -->
         <div class="panel full-width" style="border: 2px solid #0d6efd;">
-            <h3 style="color:#0d6efd;">🚀 Potensi Saham Multibagger (Harga &lt; 200)</h3>
-            <p style="font-size:13px; color:#555; margin-top:-5px; margin-bottom:15px;">Saham lapis ketiga berharga murah dengan likuiditas volume cukup. Berpotensi memberikan keuntungan kelipatan besar namun dengan profil risiko *High Risk*.</p>
+            <h3 style="color:#0d6efd;">🚀 Semua Saham Berpotensi Multibagger</h3>
+            <p style="font-size:13px; color:#555; margin-top:-5px; margin-bottom:15px;">Saham dengan likuiditas tinggi dan momentum kenaikan kuat. Berpotensi memberikan keuntungan kelipatan besar dengan profil *High Risk*.</p>
             <table>
                 <tr>
                     <th>Symbol</th>
@@ -230,7 +242,7 @@ function get_mock_bandar($symbol, $volume) {
                 </tr>
                 <?php foreach ($potential_multibaggers as $s): ?>
                 <tr>
-                    <td><strong><a href="chart.php?symbol=<?= urlencode($s['symbol']) ?>" target="_blank" style="text-decoration:none; color:#0d6efd;"><?= $s['symbol'] ?></a></strong></td>
+                    <td><?= format_symbol_badge($s, "#0d6efd") ?></td>
                     <td><?= $s['name'] ?></td>
                     <td class="text-right"><?= number_format($s['close']) ?></td>
                     <td class="text-right <?= $s['pct_change'] >= 0 ? 'text-green' : 'text-red' ?>">
@@ -260,7 +272,7 @@ function get_mock_bandar($symbol, $volume) {
                 <?php foreach ($top_volume as $s): ?>
                 <?php $bandar = get_mock_bandar($s['symbol'], $s['volume']); ?>
                 <tr>
-                    <td><strong><a href="chart.php?symbol=<?= urlencode($s['symbol']) ?>" target="_blank" style="text-decoration:none; color:#0d6efd;"><?= $s['symbol'] ?></a></strong></td>
+                    <td><?= format_symbol_badge($s, "#0d6efd") ?></td>
                     <td class="text-right"><?= number_format($s['volume']) ?></td>
                     <td><?= $bandar['status'] ?></td>
                     <td><strong><?= $bandar['top_buy'] ?></strong></td>
@@ -324,3 +336,6 @@ function get_mock_bandar($symbol, $volume) {
 
 </body>
 </html>
+
+
+

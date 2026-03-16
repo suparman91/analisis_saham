@@ -1,1 +1,0 @@
-<?php require "db.php"; $m=db_connect(); echo "Total Rows Prices: " . $m->query("SELECT COUNT(*) FROM prices")->fetch_row()[0] . PHP_EOL; echo "Unique Symbols: " . $m->query("SELECT COUNT(DISTINCT symbol) FROM prices")->fetch_row()[0] . PHP_EOL; ?>

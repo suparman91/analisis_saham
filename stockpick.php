@@ -1,6 +1,10 @@
 <?php
 require_once __DIR__ . "/db.php";
 $mysqli = db_connect();
+
+// Auto add strategy column if missing (silent fail if already exists)
+$mysqli->query("ALTER TABLE ai_stockpicks ADD COLUMN strategy VARCHAR(20) DEFAULT 'day'");
+
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
     if (isset($_POST["action"]) && $_POST["action"] == "add") {
         $sym = strtoupper(trim($_POST["symbol"]));
@@ -8,9 +12,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         $tp = (float)$_POST["target_price"];
         $sl = (float)$_POST["stop_loss"];
         $notes = trim($_POST["notes"]);
+        $strategy = isset($_POST["strategy"]) ? $_POST["strategy"] : 'day';
         
-        $stmt = $mysqli->prepare("INSERT INTO ai_stockpicks (symbol, pick_date, entry_price, target_price, stop_loss, notes) VALUES (?, NOW(), ?, ?, ?, ?)");
-        $stmt->bind_param("sddds", $sym, $entry, $tp, $sl, $notes);
+        $stmt = $mysqli->prepare("INSERT INTO ai_stockpicks (symbol, pick_date, entry_price, target_price, stop_loss, notes, strategy) VALUES (?, NOW(), ?, ?, ?, ?, ?)");
+        $stmt->bind_param("sdddss", $sym, $entry, $tp, $sl, $notes, $strategy);
         $stmt->execute();
         
         header("Location: stockpick.php");
@@ -81,8 +86,9 @@ if (!empty($pending_symbols)) {
 // ====================================
 
 // Fetch all stockpicks
-$resPicks = $mysqli->query("SELECT * FROM ai_stockpicks ORDER BY pick_date DESC");
-$picks = [];
+$resPicks = $mysqli->query("SELECT a.*, s.notation FROM ai_stockpicks a LEFT JOIN stocks s ON a.symbol = s.symbol ORDER BY a.pick_date DESC");
+$picks_day = [];
+$picks_swing = [];
 $notifications = [];
 
 while ($r = $resPicks->fetch_assoc()) {
@@ -112,9 +118,17 @@ while ($r = $resPicks->fetch_assoc()) {
     $r["current_price"] = $currentPrices[$sym] ?? $r["entry_price"];
 
     // Evaluate profit/loss percentage
-    $r["profit_pct"] = (($r["current_price"] - $r["entry_price"]) / $r["entry_price"]) * 100;
+    $r["profit_pct"] = 0;
+    if ($r["entry_price"] > 0) {
+        $r["profit_pct"] = (($r["current_price"] - $r["entry_price"]) / $r["entry_price"]) * 100;
+    }
 
-    $picks[] = $r;
+    $strat = isset($r["strategy"]) ? $r["strategy"] : 'day';
+    if ($strat === 'swing') {
+        $picks_swing[] = $r;
+    } else {
+        $picks_day[] = $r;
+    }
 }
 ?>
 <!doctype html>
@@ -202,6 +216,13 @@ while ($r = $resPicks->fetch_assoc()) {
                     <label>Catatan Analisis (Opsional)</label>
                     <textarea name="notes" class="form-control" rows="3" placeholder="Alasan masuk..."></textarea>
                 </div>
+                <div class="form-group">
+                    <label>Strategi</label>
+                    <select name="strategy" class="form-control" required style="width:100%; padding:8px; border:1px solid #ccc; border-radius:4px; box-sizing:border-box;">
+                        <option value="day">Day Trading (Sinyal Kuat & Cepat)</option>
+                        <option value="swing">Swing Trading (Medium Term & Uptrend)</option>
+                    </select>
+                </div>
                 <button type="submit" class="btn btn-primary" style="width:100%">Simpan Pick</button>
             </form>
             <script>
@@ -224,6 +245,13 @@ while ($r = $resPicks->fetch_assoc()) {
         <div class="panel">
             <h3>🤖 Auto-Scan AI Recommendations</h3>
             <p style="font-size:12px; color:#555;">Otomatis scan saham dengan liquiditas tinggi untuk mencari sinyal BUY kuat.</p>
+            <div style="margin-bottom:15px;">
+                <label style="font-size:12px; color:#555;">Strategi:</label>
+                <select id="scanStrategy" style="width:100%; padding:8px; border-radius:5px; border:1px solid #ccc;">
+                    <option value="day">Day Trading (Sinyal Kuat & Cepat)</option>
+                    <option value="swing">Swing Trading (Medium Term & Uptrend)</option>
+                </select>
+            </div>
             <button id="btnAutoScan" onclick="runAutoScan()" style="width:100%; padding:10px; background-color:#28a745; color:white; border:none; border-radius:5px; margin-bottom:15px; cursor:pointer; font-weight:bold;">
                 🔄 Mulai Scan AI Sekarang
             </button>
@@ -235,6 +263,8 @@ while ($r = $resPicks->fetch_assoc()) {
 
         <div class="panel" id="tabelTrackerContainer">
             <h3>📈 Daftar Stockpick AI & Performa</h3>
+            
+            <h4 style="margin-top: 20px; color: #0d6efd; border-bottom: 2px solid #0d6efd; display: inline-block;">Day Trading (Cepat)</h4>
             <table>
                 <tr>
                     <th>Waktu Pick</th>
@@ -247,10 +277,10 @@ while ($r = $resPicks->fetch_assoc()) {
                     <th class="text-center">Status</th>
                     <th class="text-center">Aksi</th>
                 </tr>
-                <?php foreach($picks as $p): ?>
+                <?php foreach($picks_day as $p): ?>
                 <tr>
                     <td><?= date("d M Y H:i", strtotime($p["pick_date"])) ?></td>
-                    <td><strong><a href="chart.php?symbol=<?= urlencode($p["symbol"]) ?>" target="_blank" style="text-decoration:none; color:#0d6efd;"><?= $p["symbol"] ?></a></strong></td>
+                    <td><strong><a href="chart.php?symbol=<?= urlencode($p["symbol"]) ?>" target="_blank" style="text-decoration:none; color:#0d6efd;"><?= htmlspecialchars($p["symbol"]) ?></a></strong><?php if(!empty($p['notation'])): ?> <span style="background:#ffc107; color:#000; font-size:9px; padding:2px 4px; border-radius:4px; margin-left:4px; vertical-align:super; font-weight:bold; display:inline-block;" title="Notasi Khusus: <?= htmlspecialchars($p['notation']) ?>"><?= htmlspecialchars($p['notation']) ?></span><?php endif; ?></td>
                     <td class="text-right"><?= number_format($p["entry_price"]) ?></td>
                     <td class="text-right text-green"><?= number_format($p["target_price"]) ?></td>
                     <td class="text-right text-red"><?= number_format($p["stop_loss"]) ?></td>
@@ -280,9 +310,62 @@ while ($r = $resPicks->fetch_assoc()) {
                 <?php endif; ?>
                 <?php endforeach; ?>
                 
-                <?php if(empty($picks)): ?>
+                <?php if(empty($picks_day)): ?>
                 <tr>
-                    <td colspan="9" class="text-center" style="padding: 30px;">Belum ada stockpick yang disimpan.<br><span style="color:#888; font-size:12px;">Tambahkan melalui form di samping.</span></td>
+                    <td colspan="9" class="text-center" style="padding: 20px;">Belum ada stockpick Day Trading yang disimpan.</td>
+                </tr>
+                <?php endif; ?>
+            </table>
+
+            <h4 style="margin-top: 30px; color: #198754; border-bottom: 2px solid #198754; display: inline-block;">Swing Trading (Medium Term)</h4>
+            <table>
+                <tr>
+                    <th>Waktu Pick</th>
+                    <th>Symbol</th>
+                    <th class="text-right">Entry</th>
+                    <th class="text-right">Target (TP)</th>
+                    <th class="text-right">Stop (SL)</th>
+                    <th class="text-right">Harga Skrg</th>
+                    <th class="text-right">P/L %</th>
+                    <th class="text-center">Status</th>
+                    <th class="text-center">Aksi</th>
+                </tr>
+                <?php foreach($picks_swing as $p): ?>
+                <tr>
+                    <td><?= date("d M Y H:i", strtotime($p["pick_date"])) ?></td>
+                    <td><strong><a href="chart.php?symbol=<?= urlencode($p["symbol"]) ?>" target="_blank" style="text-decoration:none; color:#0d6efd;"><?= htmlspecialchars($p["symbol"]) ?></a></strong><?php if(!empty($p['notation'])): ?> <span style="background:#ffc107; color:#000; font-size:9px; padding:2px 4px; border-radius:4px; margin-left:4px; vertical-align:super; font-weight:bold; display:inline-block;" title="Notasi Khusus: <?= htmlspecialchars($p['notation']) ?>"><?= htmlspecialchars($p['notation']) ?></span><?php endif; ?></td>
+                    <td class="text-right"><?= number_format($p["entry_price"]) ?></td>
+                    <td class="text-right text-green"><?= number_format($p["target_price"]) ?></td>
+                    <td class="text-right text-red"><?= number_format($p["stop_loss"]) ?></td>
+                    <td class="text-right">
+                        <?= number_format($p["current_price"]) ?>
+                    </td>
+                    <td class="text-right <?= $p["profit_pct"] >= 0 ? "text-green" : "text-red" ?>">
+                        <?= $p["profit_pct"] > 0 ? "+" : "" ?><?= number_format($p["profit_pct"], 2) ?>%
+                    </td>
+                    <td class="text-center">
+                        <span class="badge <?= strtolower($p["status"]) ?>"><?= $p["status"] ?></span>
+                    </td>
+                    <td class="text-center">
+                        <form method="POST" onsubmit="return confirm('Hapus pick ini?');" style="margin:0;padding:0;">
+                            <input type="hidden" name="action" value="delete">
+                            <input type="hidden" name="id" value="<?= $p["id"] ?>">
+                            <button type="submit" class="btn btn-danger">Hapus</button>
+                        </form>
+                    </td>
+                </tr>
+                <?php if($p["notes"]): ?>
+                <tr>
+                    <td colspan="9" style="font-size:11px; color:#666; border-bottom: 2px solid #eee; padding-top:0;">
+                        <em>Catatan: <?= htmlspecialchars($p["notes"]) ?></em>
+                    </td>
+                </tr>
+                <?php endif; ?>
+                <?php endforeach; ?>
+                
+                <?php if(empty($picks_swing)): ?>
+                <tr>
+                    <td colspan="9" class="text-center" style="padding: 20px;">Belum ada stockpick Swing Trading yang disimpan.</td>
                 </tr>
                 <?php endif; ?>
             </table>
@@ -359,7 +442,9 @@ while ($r = $resPicks->fetch_assoc()) {
             if (stObj) stObj.innerHTML = "Harga real-time berhasil diambil.<br>Kini menghitung Moving Average & MACD...";
 
             // Fetch Auto-Scan Logic
-            return fetch('scan_ai.php');
+            const stratObj = document.getElementById('scanStrategy');
+            const stratVal = stratObj ? stratObj.value : 'day';
+            return fetch('scan_ai.php?strategy=' + stratVal);
         })
         .then(response => response.text())
         .then(html => {
@@ -455,3 +540,4 @@ while ($r = $resPicks->fetch_assoc()) {
 
 </body>
 </html>
+

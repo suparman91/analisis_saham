@@ -62,7 +62,7 @@ $saham_ara = [];
 
 $sql_screener = "
     SELECT
-        today.symbol, today.close, today.open, today.high, today.volume,
+        today.symbol, today.close, today.open, today.high, today.low, today.volume,
         prev.close as prev_close, prev.volume as prev_vol
     FROM
         (SELECT symbol, MAX(date) as max_date FROM prices GROUP BY symbol) latest
@@ -70,16 +70,16 @@ $sql_screener = "
     JOIN prices prev ON today.symbol = prev.symbol
         AND prev.date = (SELECT MAX(date) FROM prices p3 WHERE p3.symbol = today.symbol AND p3.date < today.date)
     WHERE today.close >= 50 AND today.volume >= 500000 
-      AND today.close > prev.close
+      AND today.close < prev.close
       AND (
-          -- Kriteria 1: Naik >2%, Close 90% dekat High, Volume > 1.2x rata-rata
-          (today.close >= prev.close * 1.02 AND today.close >= today.high * 0.90 AND today.volume >= prev.volume * 1.2)
+          -- Kriteria 1: Harga turun > 2% dan close di dekat low (tekanan jual)
+          (today.close <= prev.close * 0.98 AND today.close <= today.low * 1.02 AND today.volume >= prev.volume * 1.2)
           OR
-          -- Kriteria 2: Spike Volume (Volume > 1.5x, harga naik > 3%)
-          (today.close >= prev.close * 1.03 AND today.volume >= prev.volume * 1.5)
+          -- Kriteria 2: Spike Volume saat turun (Distribusi)
+          (today.close <= prev.close * 0.97 AND today.volume >= prev.volume * 1.5)
           OR
-          -- Kriteria 3: Akumulasi harga agresif (Naik > 5%)
-          (today.close >= prev.close * 1.05)
+          -- Kriteria 3: Saham anjlok parah (> 5%)
+          (today.close <= prev.close * 0.95)
       )
 ";
 $res_screener = $mysqli->query($sql_screener);
@@ -90,24 +90,24 @@ while ($row = $res_screener->fetch_assoc()) {
     $h = (float)$row['high'];
     $h1 = (float)$row['prev_close'];
     
-    $ara_limit = calcARA($h1);
-    if ($ara_limit > 0) {
-        $pct_to_ara = (($ara_limit - $c) / $ara_limit) * 100;
-        
+    $arb_limit = calcARB($h1);
+    if ($arb_limit > 0) {
+        $pct_to_arb = (($c - $arb_limit) / $c) * 100;
+
         $status_ara = '';
         $alasan = [];
-        $is_hit_ara = ($h >= $ara_limit);
-        
-        if ($c >= $ara_limit) {
-            $status_ara = 'KUNCI ARA';
-            $alasan[] = 'Sudah Limit Atas';
-        } elseif ($c >= $h1 && $pct_to_ara <= 3 && $pct_to_ara >= 0) {
-            $status_ara = 'MENGINCAR ARA';
-            $alasan[] = 'Antrean bid menebal';
+        $is_hit_arb = ($row['low'] <= $arb_limit);
+
+        if ($c <= $arb_limit) {
+            $status_ara = 'KUNCI ARB';
+            $alasan[] = 'Sudah Limit Bawah (ARB)';
+        } elseif ($c <= $h1 && $pct_to_arb <= 3 && $pct_to_arb >= 0) {
+            $status_ara = 'MENGINCAR ARB';
+            $alasan[] = 'Antrean offer membludak / Bid tipis';
         } else {
-            $status_ara = 'POTENSI ARA BESOK';
-            if ($row['volume'] >= $row['prev_vol'] * 2) $alasan[] = 'Volume Buy Spike';
-            if ($c >= $row['high'] * 0.99) $alasan[] = 'Closing High (Marubozu)';
+            $status_ara = 'POTENSI ARB / TURUN';
+            if ($row['volume'] >= $row['prev_vol'] * 2) $alasan[] = 'Volume Distribusi (Sell Spike)';
+            if ($c <= $row['low'] * 1.01) $alasan[] = 'Closing Low (Bearish Marubozu)';
         }
 
         $analysis = analyze_symbol($mysqli, $sym);
@@ -116,16 +116,16 @@ while ($row = $res_screener->fetch_assoc()) {
         $tech_detail = $analysis['signal_details'] ?? '';
         
         $prob = 35;
-        if ($signal === 'STRONG BUY') $prob += 20;
-        elseif ($signal === 'BUY') $prob += 10;
+        if ($signal === 'STRONG SELL') $prob += 20;
+        elseif ($signal === 'SELL') $prob += 10;
         
         if (strpos(implode(',', $alasan), 'Volume') !== false) $prob += 15;
-        if ($fund === 'UNDERVALUED (Good to Buy)' || strpos($fund, 'FAIR') !== false) $prob += 10;
+        if ($fund === 'OVERVALUED (Expensive / Risky)' || strpos($fund, 'FAIR') !== false) $prob += 10;
         
         // Add dynamic probability based on actual indicators
-        if (strpos($tech_detail, 'MACD Positive') !== false) $prob += 5;
-        if (strpos($tech_detail, 'RSI Oversold') !== false) $prob += 5;
-        if (strpos($tech_detail, 'SMA Bullish') !== false) $prob += 5;
+        if (strpos($tech_detail, 'MACD Negative') !== false) $prob += 5;
+        if (strpos($tech_detail, 'RSI Overbought') !== false) $prob += 5;
+        if (strpos($tech_detail, 'SMA Bearish') !== false) $prob += 5;
 
         // Sentimen Summary
         $sentimen = [];
@@ -135,19 +135,19 @@ while ($row = $res_screener->fetch_assoc()) {
             $sentimen[] = "Tech: " . implode(', ', array_slice($tech_items, 0, 2)); // Ambil max 2 sinyal kuat
         }
 
-        if ($c >= $ara_limit) $prob = 99;
-        if ($pct_to_ara <= 3 && $pct_to_ara >= 0) $prob = max($prob, 85);
+        if ($c <= $arb_limit) $prob = 99;
+        if ($pct_to_arb <= 3 && $pct_to_arb >= 0) $prob = max($prob, 85);
 
-        if ($prob >= 50 || $status_ara !== 'POTENSI ARA BESOK') {
+        if ($prob >= 50 || $status_ara !== 'POTENSI ARB / TURUN') {
             $saham_ara[] = [
                 'symbol' => str_replace('.JK', '', $sym),
                 'open' => (float)$row['open'],
                 'prev' => $h1,
                 'close' => $c,
-                'ara' => $ara_limit,
+                'ara' => $arb_limit,
                 'status' => $status_ara,
-                'distance' => round($pct_to_ara, 2),
-                'hit_ara' => $is_hit_ara,
+                'distance' => round($pct_to_arb, 2),
+                'hit_arb' => $is_hit_arb,
                 'reason' => implode(', ', $alasan),
                 'signal' => $signal,
                 'sentimen' => implode(' | ', $sentimen),
@@ -168,8 +168,8 @@ while ($row = $res_screener->fetch_assoc()) {
 }
 
 usort($saham_ara, function($a, $b) {
-    if ($a['status'] === 'KUNCI ARA' && $b['status'] !== 'KUNCI ARA') return -1;
-    if ($b['status'] === 'KUNCI ARA' && $a['status'] !== 'KUNCI ARA') return 1;
+    if ($a['status'] === 'KUNCI ARB' && $b['status'] !== 'KUNCI ARB') return -1;
+    if ($b['status'] === 'KUNCI ARB' && $a['status'] !== 'KUNCI ARB') return 1;
     return $b['prob'] <=> $a['prob'];
 });
 ?>
@@ -177,7 +177,7 @@ usort($saham_ara, function($a, $b) {
 <html>
 <head>
   <meta charset="utf-8">
-  <title>ARA Hunter & Kalkulator - Sistem Analisis Saham</title>
+  <title>ARB Hunter (Saham Potensi Turun) & Kalkulator - Sistem Analisis Saham</title>
   <style>
     body{font-family:Arial,Helvetica,sans-serif;margin:20px;background:#f8f9fa;}
     .container { max-width:1200px; margin:0 auto; }
@@ -233,13 +233,12 @@ usort($saham_ara, function($a, $b) {
         <a href="chart.php">📈 Chart & Analisis</a>
         <a href="scan_manual.php">🔍 Scanner BSJP/BPJP</a>
         <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
-        <a href="ara_hunter.php" class="active">🚀 ARA Hunter</a>
-          <a href="arb_hunter.php">&#x1F4C9; ARB Hunter</a>
+        <a href="arb_hunter.php" class="active">📉 ARB Hunter</a>
         <a href="portfolio.php">&#x1F4BC; Autopilot Portofolio</a>
         <a href="telegram_setting.php" style="margin-left:auto; background:#475569;"><img src="https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" width="14" style="vertical-align:middle;margin-right:5px;">Set Alert</a>
       </nav>
 
-      <h1>🚀 ARA Hunter & Kalkulator Fraksi</h1>
+      <h1>📉 ARB Hunter (Saham Potensi Turun) & Kalkulator Fraksi</h1>
       <p class="subtitle">Berdasarkan Regulasi Simetris BEI (4 September 2023)</p>
       
       <div class="grid-container">
@@ -269,8 +268,8 @@ usort($saham_ara, function($a, $b) {
           <div class="panel" style="grid-column: 2;">
               <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:15px; border-bottom:2px solid #eee; padding-bottom:10px;">
                   <div>
-                      <h3 style="margin-bottom:5px; border:none; padding-bottom:0;">📡 Screener Live: Potensi ARA Besok & Hunter</h3>
-                      <p style="font-size:12px; color:#666; margin:0;">Saham mengunci ARA, mengincar ARA, atau potensi naik berdasar Momentum & Fundamental.</p>
+                      <h3 style="margin-bottom:5px; border:none; padding-bottom:0;">📡 Screener Live: Potensi Turun Besok & Hunter</h3>
+                      <p style="font-size:12px; color:#666; margin:0;">Saham mengunci ARB, mengincar ARB, atau potensi turun berdasar Momentum & Fundamental.</p>
                   </div>
                   <label style="font-size:12px; background:#f1f5f9; padding:5px 10px; border-radius:4px; border:1px solid #cbd5e1; cursor:pointer; display:flex; align-items:center; gap:5px;">
                       <input type="checkbox" id="autoRefresh" checked onchange="toggleRefresh()"> 
@@ -280,7 +279,7 @@ usort($saham_ara, function($a, $b) {
               
               <?php if (empty($saham_ara)): ?>
                   <div style="padding:20px; text-align:center; color:#888; background:#fafafa; border:1px dashed #ddd; border-radius:5px;">
-                      Belum ada saham yang terpantau berpotensi tinggi ARA saat ini.
+                      Belum ada saham yang terpantau berpotensi tinggi ARB saat ini.
                   </div>
               <?php else: ?>
                   <table>
@@ -289,8 +288,8 @@ usort($saham_ara, function($a, $b) {
                               <th>Symbol</th>
                               <th>Harga Open</th>
                               <th>Harga Skrg</th>
-                              <th>Batas ARA</th>
-                              <th>HIT ARA?</th>
+                              <th>Batas ARB</th>
+                              <th>HIT ARB?</th>
                               <th>AI Prob</th>
                               <th>Sinyal / Alasan / Sentimen</th>
                               <th>Status</th>
@@ -302,7 +301,7 @@ usort($saham_ara, function($a, $b) {
                                   <td><strong><a href="chart.php?symbol=<?= urlencode($s["symbol"] . '.JK') ?>" target="_blank" style="color:#2563eb; text-decoration:none;"><?= htmlspecialchars($s["symbol"]) ?></a></strong></td>                                    <td style="color:#f59f00;">Rp <?= number_format($s["open"], 0, ",", ".") ?></td>                                  <td>Rp <?= number_format($s["close"], 0, ",", ".") ?></td>
                                   <td style="color:#10b981; font-weight:bold;">Rp <?= number_format($s["ara"], 0, ",", ".") ?></td>
                                   <td style="text-align:center;">
-                                      <?php if ($s["hit_ara"]): ?>
+                                      <?php if ($s["hit_arb"]): ?>
                                           <span style="color:#10b981; font-weight:bold;">🎯 YES</span>
                                       <?php else: ?>
                                           <span style="color:#ef4444; font-weight:bold;">❌ NO</span>
@@ -335,12 +334,12 @@ usort($saham_ara, function($a, $b) {
                                             'rr' => $s['analysis_detail']['rr']
                                         ]), ENT_QUOTES, 'UTF-8');
                                       ?>
-                                      <?php if ($s["status"] === "KUNCI ARA"): ?>
-                                        <span class="badge badge-ara" style="background:#5b21b6;" onclick="showDetail(<?= $detail_json ?>)">🔒 KUNCI ARA</span>
-                                      <?php elseif ($s["status"] === "MENGINCAR ARA"): ?>
-                                        <span class="badge badge-mendekati" onclick="showDetail(<?= $detail_json ?>)">🔥 MENUJU ARA</span>
+                                      <?php if ($s["status"] === "KUNCI ARB"): ?>
+                                        <span class="badge badge-ara" style="background:#5b21b6;" onclick="showDetail(<?= $detail_json ?>)">🔒 KUNCI ARB</span>
+                                      <?php elseif ($s["status"] === "MENGINCAR ARB"): ?>
+                                        <span class="badge badge-mendekati" onclick="showDetail(<?= $detail_json ?>)">⚠️ MENUJU ARB</span>
                                       <?php else: ?>
-                                        <span class="badge badge-ara" style="background:#0ea5e9;" onclick="showDetail(<?= $detail_json ?>)">💡 POTENSI BESOK</span>
+                                        <span class="badge badge-ara" style="background:#0ea5e9;" onclick="showDetail(<?= $detail_json ?>)">💡 POTENSI TURUN</span>
                                       <?php endif; ?>
                                   </td>
                               </tr>
@@ -352,17 +351,17 @@ usort($saham_ara, function($a, $b) {
               <div style="margin-top: 20px; background: #fdfce8; border-left: 4px solid #fde047; padding: 15px; border-radius: 4px; font-size: 13px; color: #555;">
                   <strong style="display:block; margin-bottom: 8px; color: #854d0e;">📖 Panduan & Keterangan Lengkap:</strong>
                   <ul style="margin: 0; padding-left: 20px; line-height: 1.6;">
-                      <li><strong>Kunci ARA (🔒):</strong> Harga saham sudah menyentuh batas persentase kenaikan maksimal harian dari Bursa. Umumnya antrean beli mengunci (lock) di harga ini, potensi terbuka <em>gap up</em> esok hari.</li>
-                      <li><strong>Mengincar ARA (🔥):</strong> Harga naik signifikan secara agresif dan selisih harganya berjarak &le; 3% dari Batas ARA. Momentum sangat kuat.</li>
-                      <li><strong>Potensi Besok (💡):</strong> Harga mungkin tidak ARA hari ini, namun pola akumulasi memenuhi kriteria screener (harga naik solid didukung volume). Sangat layak pantau besok.</li>
-                      <li><strong>HIT ARA🎯:</strong> Indikator yang menandakan apakah harga <em>High</em> (Tertinggi) di hari ini benar-benar sempat menyentuh Batas ARA, meskipun pada penutupan (<em>Close</em>) harga turun ke level lebih rendah.</li>
-                      <li><strong>Volume Buy Spike:</strong> Volume transaksi hari ini meledak minimal 1.5x hingga 2x lipat dari rata-rata/hari sebelumnya. Indikasi masuknya <em>big money / institusi</em>.</li>
-                      <li><strong>Closing High (Marubozu):</strong> Saham ditutup rata atau sangat dekat (selisih &lt;2%) dengan harga titik tertinggi harian. Sentimen <em>buyer</em> kuat tanpa tekanan jual jelang <em>closing</em> pasar.</li>
+                      <li><strong>Kunci ARB (🔒):</strong> Harga saham sudah menyentuh batas persentase penurunan maksimal harian dari Bursa. Umumnya antrean jual (offer) mengunci penuh (lock) di harga ini, potensi terbuka <em>gap down</em> esok hari.</li>
+                      <li><strong>Mengincar ARB (⚠️):</strong> Harga turun signifikan secara agresif dan selisih harganya berjarak &le; 3% dari Batas ARB. Momentum sangat kuat.</li>
+                      <li><strong>Potensi Besok (💡):</strong> Harga mungkin tidak ARB hari ini, namun pola distribusi memenuhi kriteria screener (harga turun solid didukung volume jual). Sangat layak pantau besok.</li>
+                      <li><strong>HIT ARB🎯:</strong> Indikator yang menandakan apakah harga <em>Low</em> (Terendah) di hari ini benar-benar sempat menyentuh Batas ARB, meskipun pada penutupan (<em>Close</em>) harga memantul ke level lebih tinggi.</li>
+                      <li><strong>Volume Distribusi (Sell Spike):</strong> Volume transaksi hari ini meledak minimal 1.5x hingga 2x lipat dari rata-rata/hari sebelumnya. Indikasi keluarnya atau distribusi oleh <em>big money / institusi</em>.</li>
+                      <li><strong>Closing Low (Bearish Marubozu):</strong> Saham ditutup rata atau sangat dekat (selisih &lt;2%) dengan harga titik terendah harian. Sentimen <em>seller (jual)</em> kuat tanpa tekanan beli jelang <em>closing</em> pasar.</li>
                       <li><strong>Sentimen (Valuasi & Technical):</strong> 
                           <ul style="margin:0; padding-left: 20px;">
-                              <li><em>Valuasi (Undervalued/Fair)</em> membuktikan saham masih murah (PE/PBV rendah).</li>
-                              <li><em>MACD Positive / SMA Bullish</em> mendeteksi tren akumulasi sedang berlangsung (Golden Cross).</li>
-                              <li><em>RSI Oversold</em> menandakan harga saham sudah berbalik dari titik jenuh jual.</li>
+                              <li><em>Valuasi (Overvalued/Fair)</em> mengindikasikan saham sedang mahal atau overvalued.</li>
+                              <li><em>MACD Negative / SMA Bearish</em> mendeteksi tren distribusi atau downtrend sedang berlangsung (Death Cross).</li>
+                              <li><em>RSI Overbought</em> menandakan harga saham sudah mencapai atau turun dari titik jenuh beli (terlalu mahal).</li>
                           </ul>
                       </li>
                       <li><strong>AI Prob:</strong> Persentase keakuratan momentum dari kecerdasan sistem (0-99%). Skor dinaikkan jika ada faktor pendukung seperti Tren <em>STRONG BUY</em> teknikal, lonjakan volume masif, atau jika valuasi saham masih murah (<em>Undervalued/Fair</em>). Semakin tinggi semakin bagus.</li>

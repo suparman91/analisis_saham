@@ -21,9 +21,11 @@ while ($row = $res->fetch_assoc()) {
 
 $recommendations = [];
 
+$strategy = $_GET['strategy'] ?? 'day';
+
 foreach ($symbols as $symbol) {
     try {
-        $analysis = analyze_symbol($conn, $symbol);
+        $analysis = analyze_symbol($conn, $symbol, $strategy);
         if (isset($analysis['error'])) continue;
 
         $current_price = $analysis['latest']['close'] ?? 0;
@@ -38,7 +40,14 @@ foreach ($symbols as $symbol) {
         // 2. Suspensi & Likuiditas: Hindari saham yang tidak ada transaksi (Volume 0) 
         // atau likuiditas harian terlalu rendah (< Rp 500 Juta Turnover) asumsi volume = shares
         $turnover = $volume * $current_price;
-        if ($volume == 0 || $turnover < 500000000) continue;
+        
+        if ($strategy === 'swing') {
+            // Likuiditas sedikit direnggangkan untuk swing (Rp 200 Juta Turnover) bisa masuk pantauan jika uptrend lambat
+            if ($volume == 0 || $turnover < 200000000) continue;
+        } else {
+            // Day trading butuh likuiditas extra
+            if ($volume == 0 || $turnover < 500000000) continue;
+        }
 
         // 3. Batasan Auto Rejection (ARA/ARB): 
         // Jangan rekomendasikan jika harga sudah naik tidak wajar (mendekati ARA) di hari itu
@@ -50,20 +59,42 @@ foreach ($symbols as $symbol) {
             $change_pct = (($current_price - $prev_price) / $prev_price) * 100;
         }
         
-        // ARA BEI = ~35% (<Rp200), ~25% (Rp200-5000), ~20% (>Rp5000)
-        // Kita bypass jika kenaikan sudah > 20% (sangat rawan guyuran) atau turun tajam (ARB)
-        if ($change_pct >= 20 || $change_pct <= -15) continue; 
-        
-// Kalkulasi Skor Probabilitas HIT (0-100%)
-        $ai_prob = 50; // Base probabilitas netral
-        if ($signal === 'STRONG BUY') $ai_prob += 25;
-        elseif ($signal === 'BUY') $ai_prob += 10;
-        elseif ($signal === 'SELL' || $signal === 'STRONG SELL') $ai_prob -= 20;
+        if ($strategy === 'swing') {
+            // Swing lebih mentolerir saham yang sedang koreksi minor (misal sampai -20%) selama tren besarnya masih bullish. Tapi kalau sudah naik tajam hari itu > 15%, hindari beli di pucuk.
+            if ($change_pct >= 15 || $change_pct <= -20) continue;
+        } else {
+            // ARA BEI = ~35% (<Rp200), ~25% (Rp200-5000), ~20% (>Rp5000)
+            // Kita bypass jika kenaikan sudah > 20% (sangat rawan guyuran) atau turun tajam (ARB)
+            if ($change_pct >= 20 || $change_pct <= -15) continue;
+        }
 
-        if (strpos($details, 'RSI Oversold') !== false) $ai_prob += 10;
-        if (strpos($details, 'SMA Bullish') !== false) $ai_prob += 10;
-        if (strpos($details, 'MACD Positive') !== false) $ai_prob += 10;        
-        if (strpos($details, 'Price < BB Lower') !== false) $ai_prob += 5;      
+        $signal = $analysis['signal'] ?? '';
+        $details = $analysis['signal_details'] ?? '';
+
+        // Kalkulasi Skor Probabilitas HIT (0-100%)
+        $ai_prob = 50; // Base probabilitas netral
+        
+        if ($strategy === 'swing') {
+            // Bobot beda untuk swing: SMA lebih penting daripada RSI, MACD sangat penting untuk momentum
+            if ($signal === 'STRONG BUY') $ai_prob += 20;
+            elseif ($signal === 'BUY') $ai_prob += 10;
+            elseif ($signal === 'SELL' || $signal === 'STRONG SELL') $ai_prob -= 30; // Sangat tidak disarankan beli pas downtrend
+
+            if (strpos($details, 'SMA Bullish') !== false) $ai_prob += 20; // Indikator kuat untuk Swing
+            if (strpos($details, 'MACD Positive') !== false) $ai_prob += 15;
+            if (strpos($details, 'RSI Oversold') !== false) $ai_prob += 5; // RSI kadang kurang kuat di swing (bisa oversold lama)
+            if (strpos($details, 'Price < BB Lower') !== false) $ai_prob += 5;
+        } else {
+            // Day Trading (default)
+            if ($signal === 'STRONG BUY') $ai_prob += 25;
+            elseif ($signal === 'BUY') $ai_prob += 10;
+            elseif ($signal === 'SELL' || $signal === 'STRONG SELL') $ai_prob -= 20;
+    
+            if (strpos($details, 'RSI Oversold') !== false) $ai_prob += 10;
+            if (strpos($details, 'SMA Bullish') !== false) $ai_prob += 10;
+            if (strpos($details, 'MACD Positive') !== false) $ai_prob += 10;        
+            if (strpos($details, 'Price < BB Lower') !== false) $ai_prob += 5;      
+        }
 
         $rr = $analysis['trading_plan']['reward_risk'] ?? 0;
         if ($rr >= 1.5) $ai_prob += 5;
@@ -144,7 +175,8 @@ if (count($recommendations) == 0) {
                         <input type='hidden' name='entry_price' value='$price'>
                         <input type='hidden' name='target_price' value='$tgt'>
                         <input type='hidden' name='stop_loss' value='$sl'>
-                        <input type='hidden' name='notes' value='AI Auto-Scan Recommendation. Score: {$rec['score']}'>
+                        <input type='hidden' name='strategy' value='$strategy'>
+                        <input type='hidden' name='notes' value='AI Auto-Scan Recommendation ($strategy). Score: {$rec['score']}'>
                         <button type='submit' style='width:100%; padding:8px; background:#28a745; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer;'>+ Tambah ke Tracker</button>
                     </form>
                 </div>

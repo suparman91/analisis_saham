@@ -283,15 +283,23 @@ if (count($results) > 0) {
     echo "</table>";
     echo "</div>";
 
-    // Teks Edukasi / Penjelasan Strategi
-    echo "<div style='margin-top: 20px; padding: 10px; background-color: #e9ecef; border-left: 5px solid #007bff; border-radius: 4px;'>";
+    // Teks Edukasi / Penjelasan Strategi Pendek
+    echo "<div style='margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-left: 5px solid #007bff; border-radius: 4px; line-height: 1.6;'>";
+    echo "<h4 style='margin-top:0; color:#0056b3;'>🧠 Saran Psikologi Trading Hari Ini:</h4>";
+    
+    // Nasihat Psikologis Tergantung Tipe
     if ($tipe === 'BPJP') {
-        echo "<p style='margin: 0;'><small><b>Logic Analisis BPJP:</b> Mencari saham-saham yang kemarin ditutup sangat dominan (<i>Close = absolute High</i>) dengan kenaikan tajam minimal +5% dari <i>Open</i> (pola <i>Marubozu Bullish</i>). Harapannya ini memicu momentum antrian pembeli berlimpah yang membuat harga akan langsung <b>'Gap Up'</b> / lompat di pembukaan pagi ini. Pantau ketat & Take Profit cepat.</small></p>";
+         echo "<p style='margin: 0 0 10px 0;'><strong>Logika AI BPJP:</strong> Mencari pola <i>Marubozu Bullish</i>. Karena momentum sangat tinggi di pagi hari, market akan sangat fluktuatif.</p>";
+         echo "<p style='margin: 0; color: #d9534f; font-weight: bold;'>⚠️ Resep Ketenangan: Tetap rasional. Jangan FOMO (Fear Of Missing Out) atau terburu-buru 'Haka' di pucuk. Apabila pagi ini harga sudah langsung terbang jauh melampaui harga target, relakan saja. Market selalu ada hari esok. Ibarat memancing, tarik napas, tunggu dengan sabar sampai umpan (harga) benar-benar turun kembali ke area yang aman bagi kesehatan portofolio Anda.</p>";
+    } else if ($tipe === 'SWING') {
+         echo "<p style='margin: 0 0 10px 0;'><strong>Logika AI Uptrend Tracker:</strong> Mendeteksi pergerakan trend naik yang stabil (Close > MA20 > MA50).</p>";
+         echo "<p style='margin: 0; color: #198754; font-weight: bold;'>🧘‍♂️ Resep Ketenangan: \"Waktu yang menghasilkan uang, bukan akrobat.\" <br>Pasien butuh waktu untuk sembuh, pohon butuh waktu untuk berbuah. Saham Uptrend tidak selalu hijau setiap hari. Jangan 'Panic Sell' hanya karena merah 1-2 persen hari ini. Percayakan pada <i>Set Planner</i> Anda. Pasang <i>Stop Loss</i> secukupnya lalu tutup layarnya. Biarkan bandar dan algoritma uang besar yang bekerja pelan-pelan mengangkat harga sahamnya.</p>";
     } else {
-        echo "<p style='margin: 0;'><small><b>Logic Analisis BSJP:</b> Mencari saham-saham dengan formasi <i>'Strong Close'</i> (Harga penutupan hari ini berada di 20% level tertinggi harga hariannya). Hal ini mengindikasikan bandar mengerek harga / akumulasi masif pada penghujung masa tutup pasar (sesi 2). Saham ini sangat potensial kita beli sore ini dan di-jual lagi besok paginya (Swing Trading sangat pendek).</small></p>";
+         echo "<p style='margin: 0 0 10px 0;'><strong>Logika AI BSJP:</strong> Memfilter emiten yang diakumulasi kuat oleh institusi pada menit-menit penutupan IHSG.</p>";
+         echo "<p style='margin: 0; color: #fd7e14; font-weight: bold;'>⚖️ Resep Ketenangan: Jaga ekspektasi. Pembelian sore (BSJP) tujuannya adalah amankan pantulan singkat keesokan siangnya. Ambil cuan secukupnya (Bungkus 2-3%) untuk kebahagiaan hati Anda, lalu alihkan ke rutinitas utama Anda tanpa deg-degan berkepanjangan.</p>";
     }
     echo "</div>";
-    
+
 } else {
     echo "<p style='color: orange; font-weight: bold;'>Tidak ada saham yang memenuhi rumus tajam kriteria $tipe pada tanggal data terakhir ($last_date).</p>";
 }
