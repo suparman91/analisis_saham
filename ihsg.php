@@ -59,8 +59,8 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
 
   <nav class="top-menu">
     <a href="index.php">📊 Dashboard Market</a>
-    <a href="ihsg.php">&#x1F4C8; Chart IHSG</a>
-          <a href="chart.php" class="active">📈 Chart & Analisis</a>
+    <a href="ihsg.php" class="active">&#x1F4C8; Chart IHSG</a>
+          <a href="chart.php" >📈 Chart & Analisis</a>
     <a href="scan_manual.php">🔍 Scanner BSJP/BPJP</a>
     <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
     <a href="ara_hunter.php">🚀 ARA Hunter</a>
@@ -73,15 +73,7 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
   </nav>
 
   <div class="controls-container" style="margin-bottom:15px; background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; display:flex; align-items:center; gap: 10px;">
-    <strong style="margin-right:10px;">Pilih Saham:</strong>
-    <select id="symbol" style="min-width: 250px; padding: 6px; border-radius: 4px; border: 1px solid #cbd5e1;">
-      <option value="">-- Pilih Saham --</option>
-        <?php foreach ($stocks as $s) {
-          $not = !empty($s['notation']) ? " [{$s['notation']}]" : "";
-          echo '<option value="'.$s['symbol'].'">'.$s['symbol'].' - '.$s['name'].$not.'</option>';
-        } ?>
-    </select>
-    <button id="btnLoad" style="background:#0d6efd; color:#fff; border:none; padding:8px 16px; border-radius:4px; font-weight:bold; cursor:pointer;">Load Data</button>
+    <h2 style="margin:0; font-size:18px; color:#1e293b; display:flex; align-items:center;"> Chart & Analisis IHSG (^JKSE)</h2>
     <button id="btnResetZoom" style="margin-left:12px; padding:8px 16px; border-radius:4px; border:1px solid #cbd5e1; background:#fff; cursor:pointer;">🔄 Reset Zoom</button>
     <div style="margin-left:auto; display:flex; gap:10px; align-items:center; flex: 1; min-width: 200px; max-width: 450px;"><strong style="white-space:nowrap;font-size:13px;">Tampilkan Indikator:</strong><select id="indicatorToggle" multiple placeholder="Pilih Indikator..."></select></div>
   </div>
@@ -193,9 +185,9 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
   </div>
 
 <script>
-    let symbolSelect, indicatorSelect;
+    let indicatorSelect;
     document.addEventListener('DOMContentLoaded', function() {
-        symbolSelect = new TomSelect('#symbol', {create: false, sortField: { field: 'text', direction: 'asc' }, maxOptions: 1000});
+        
         indicatorSelect = new TomSelect('#indicatorToggle', {valueField: 'id',labelField: 'title',searchField: 'title',options: [{id: 'SMA 5', title: 'SMA 5'},{id: 'SMA 20', title: 'SMA 20'},{id: 'SMA 50', title: 'SMA 50'},{id: 'SMA 200', title: 'SMA 200'},{id: 'BB', title: 'Bollinger Bands'}],plugins: ['remove_button'],onChange: function(values) {if(!chart) return; const selected=values||[]; chart.data.datasets.forEach((ds) => {if(ds.label.includes('OHLC')) return; let shouldShow=false; if(selected.includes(ds.label)) shouldShow=true; if(selected.includes('BB') && ds.label.includes('BB ')) shouldShow=true; ds.hidden=!shouldShow;}); chart.update();}});
         indicatorSelect.setValue(['SMA 5', 'SMA 20', 'BB']);
     });
@@ -351,6 +343,7 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
       }
 
       // Load analysis (historical prices) first to render chart
+      console.log('Fetching:', 'analyze_api.php?symbol='+encodeURIComponent(symbol));
       fetch('analyze_api.php?symbol='+encodeURIComponent(symbol)).then(async r=>{
         if (!r.ok) {
           const txt = await r.text();
@@ -506,10 +499,7 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
       });
     }
 
-    document.getElementById('btnLoad').addEventListener('click', ()=>{
-      const sym = document.getElementById('symbol').value;
-      render(sym);
-    });
+    
 
     // Modal interactions
     const btnSettings = document.getElementById('btnSettings');
@@ -542,7 +532,7 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
       
       alert('Konfigurasi API Key berhasil disimpan!');
       document.getElementById('settingsModal').style.display = 'none';
-      if (document.getElementById('symbol').value) render(document.getElementById('symbol').value);
+      if ('^JKSE') render('^JKSE');
     });
 
     document.getElementById('toggleRaw').addEventListener('click', ()=>{
@@ -565,45 +555,17 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
       } catch(e){}
     })();
 
-    // auto-load from URL if present
-    window.addEventListener('DOMContentLoaded', () => {
-        setTimeout(() => {
-            const urlParams = new URLSearchParams(window.location.search);
-            const symFromUrl = urlParams.get('symbol');
-            if (symFromUrl) {
-              const selectEl = document.getElementById('symbol');
-              // Ensure option exists or create it temporarily
-              let exists = false;
-              for (let i = 0; i < selectEl.options.length; i++) {
-                  if (selectEl.options[i].value === symFromUrl) {
-                      exists = true; break;
-                  }
-              }
-              if (!exists) {
-                if (typeof symbolSelect !== 'undefined') {
-                    symbolSelect.addOption({value: symFromUrl, text: symFromUrl});
-                } else {
-                    const newOption = document.createElement('option');
-                    newOption.value = symFromUrl;
-                    newOption.text = symFromUrl;
-                    selectEl.appendChild(newOption);
-                }
-              }
-
-              if (typeof symbolSelect !== 'undefined') {
-                  symbolSelect.setValue(symFromUrl);
-              } else {
-                  selectEl.value = symFromUrl;
-              }
-              render(symFromUrl);
-            } else if (document.getElementById('symbol').value) {
-              render(document.getElementById('symbol').value);
-            }
-        }, 300); // 300ms buffer to ensure all core plugin states are registered
-    });
+      window.addEventListener('DOMContentLoaded', () => { setTimeout(() => { render('^JKSE'); }, 300); });
   </script>
 </body>
 </html>
+
+
+
+
+
+
+
 
 
 

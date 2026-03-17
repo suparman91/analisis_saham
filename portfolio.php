@@ -146,7 +146,8 @@ if ($res) {
   <div class="container">
       <nav class="top-menu">
         <a href="index.php">📊 Dashboard Market</a>
-        <a href="chart.php">📈 Chart & Analisis</a>
+        <a href="ihsg.php">&#x1F4C8; Chart IHSG</a>
+          <a href="chart.php">📈 Chart & Analisis</a>
         <a href="scan_manual.php">🔍 Scanner BSJP/BPJP</a>
         <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
         <a href="ara_hunter.php">🚀 ARA Hunter</a>
@@ -334,3 +335,4 @@ function showAvgModal(id, symbol) {
 </script>
 </body>
 </html>
+

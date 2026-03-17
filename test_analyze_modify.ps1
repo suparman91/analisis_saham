@@ -1,5 +1,6 @@
-$f = "analyze.php"
-$c = Get-Content $f -Raw
-$c = $c -replace '\$sma20 = sma\(\$closes, 20\);', "`$sma20 = sma(`$closes, 20);`n    `$sma50 = sma(`$closes, 50);`n    `$sma200 = sma(`$closes, 200);"
-$c = $c -replace "'sma20'=>`$sma20,", "'sma20'=>`$sma20,`n        'sma50'=>`$sma50,`n        'sma200'=>`$sma200,"
-Set-Content -Path $f -Value $c
+<?php
+$content = file_get_contents("analyze.php");
+$content = str_replace("function auto_fetch_history(\$mysqli, \$symbol) {", "function auto_fetch_history(\$mysqli, \$symbol) {\n    \$mysqli->query(\"INSERT IGNORE INTO stocks (symbol, name) VALUES ('\".\$mysqli->real_escape_string(\$symbol).\"', 'Auto Added')\");\n", $content);
+file_put_contents("analyze.php", $content);
+echo "Ok";
+?>

@@ -22,6 +22,8 @@ function fetch_prices($mysqli, $symbol, $limit = 500) {
 }
 
 function auto_fetch_history($mysqli, $symbol) {
+    $mysqli->query("INSERT IGNORE INTO stocks (symbol, name) VALUES ('".$mysqli->real_escape_string($symbol)."', 'Auto Added')");
+
     // Try to fetch 6 months of historical data from Yahoo Finance
     $url = "https://query1.finance.yahoo.com/v8/finance/chart/" . urlencode($symbol) . "?range=6mo&interval=1d";
     
@@ -412,3 +414,4 @@ function analyze_symbol($mysqli, $symbol, $strategy = 'day') {
 }
 
 ?>
+

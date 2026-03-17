@@ -293,7 +293,8 @@ usort($saham_ara, function($a, $b) {
   <div class="container">
       <nav class="top-menu">
         <a href="index.php">📊 Dashboard Market</a>
-        <a href="chart.php">📈 Chart & Analisis</a>
+        <a href="ihsg.php">&#x1F4C8; Chart IHSG</a>
+          <a href="chart.php">📈 Chart & Analisis</a>
         <a href="scan_manual.php">🔍 Scanner BSJP/BPJP</a>
         <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
         <a href="ara_hunter.php" class="active">🚀 ARA Hunter</a>
@@ -349,11 +350,13 @@ usort($saham_ara, function($a, $b) {
                   <table>
                       <thead>
                           <tr>
+                              <th>Tgl Prediksi</th>
                               <th>Symbol</th>
                               <th>Harga Open</th>
                               <th>Harga Skrg</th>
                               <th>Batas ARA</th>
                               <th>HIT ARA?</th>
+                              <th>Tgl Hit ARA</th>
                               <th>AI Prob</th>
                               <th>Sinyal / Alasan / Sentimen</th>
                               <th>Status</th>
@@ -362,7 +365,8 @@ usort($saham_ara, function($a, $b) {
                       <tbody>
                           <?php foreach ($saham_ara as $s): ?>
                               <tr>
-                                  <td><strong><a href="chart.php?symbol=<?= urlencode($s["symbol"] . '.JK') ?>" target="_blank" style="color:#2563eb; text-decoration:none;"><?= htmlspecialchars($s["symbol"]) ?></a></strong></td>                                    <td style="color:#f59f00;">Rp <?= number_format($s["open"], 0, ",", ".") ?></td>                                  <td>Rp <?= number_format($s["close"], 0, ",", ".") ?></td>
+                                  <td style="font-size:11px; color:#555;"><?= isset($s['tanggal_prediksi']) ? $s['tanggal_prediksi'] : date('Y-m-d') ?></td>
+                                  <td><strong><a href="chart.php?symbol=<?= urlencode($s["symbol"] . '.JK') ?>" target="_blank" style="color:#2563eb; text-decoration:none;"><?= htmlspecialchars($s["symbol"]) ?></a></strong></td>                                    <td style="color:#f59f00;"><?= $s["open"] > 0 ? 'Rp ' . number_format($s["open"], 0, ",", ".") : '-' ?></td>                                  <td>Rp <?= number_format($s["close"], 0, ",", ".") ?></td>
                                   <td style="color:#10b981; font-weight:bold;">Rp <?= number_format($s["ara"], 0, ",", ".") ?></td>
                                   <td style="text-align:center;">
                                       <?php if ($s["hit_ara"]): ?>
@@ -370,6 +374,9 @@ usort($saham_ara, function($a, $b) {
                                       <?php else: ?>
                                           <span style="color:#ef4444; font-weight:bold;">❌ NO</span>
                                       <?php endif; ?>
+                                  </td>
+                                  <td style="font-size:11px; text-align:center; color:#10b981; font-weight:bold;">
+                                      <?= !empty($s['tanggal_tercapai']) ? $s['tanggal_tercapai'] : '-' ?>
                                   </td>
                                   <td>
                                     <?php 
@@ -388,14 +395,14 @@ usort($saham_ara, function($a, $b) {
                                             'symbol' => $s['symbol'],
                                             'prob' => $s['prob'],
                                             'signal' => $s['signal'],
-                                            'signal_details' => $s['analysis_detail']['signal_details'],
-                                            'pe' => is_numeric($s['analysis_detail']['pe']) ? round($s['analysis_detail']['pe'],2) : $s['analysis_detail']['pe'],
-                                            'pbv' => is_numeric($s['analysis_detail']['pbv']) ? round($s['analysis_detail']['pbv'],2) : $s['analysis_detail']['pbv'],
-                                            'roe' => is_numeric($s['analysis_detail']['roe']) ? round($s['analysis_detail']['roe'],2).'%' : $s['analysis_detail']['roe'],
-                                            'entry' => 'Rp '.number_format($s['analysis_detail']['entry'], 0, ",", "."),
-                                            'tp' => 'Rp '.number_format($s['analysis_detail']['tp'], 0, ",", "."),
-                                            'sl' => 'Rp '.number_format($s['analysis_detail']['sl'], 0, ",", "."),
-                                            'rr' => $s['analysis_detail']['rr']
+                                            'signal_details' => $s['analysis_detail']['signal_details'] ?? '-',
+                                            'pe' => is_numeric($s['analysis_detail']['pe']??null) ? round($s['analysis_detail']['pe'],2) : ($s['analysis_detail']['pe']??'N/A'),
+                                            'pbv' => is_numeric($s['analysis_detail']['pbv']??null) ? round($s['analysis_detail']['pbv'],2) : ($s['analysis_detail']['pbv']??'N/A'),
+                                            'roe' => is_numeric($s['analysis_detail']['roe']??null) ? round($s['analysis_detail']['roe'],2).'%' : ($s['analysis_detail']['roe']??'N/A'),
+                                            'entry' => 'Rp '.number_format(intval($s['analysis_detail']['entry']??0), 0, ",", "."),
+                                            'tp' => 'Rp '.number_format(intval($s['analysis_detail']['tp']??0), 0, ",", "."),
+                                            'sl' => 'Rp '.number_format(intval($s['analysis_detail']['sl']??0), 0, ",", "."),
+                                            'rr' => $s['analysis_detail']['rr'] ?? '0'
                                         ]), ENT_QUOTES, 'UTF-8');
                                       ?>
                                       <?php if ($s["status"] === "KUNCI ARA"): ?>
@@ -557,6 +564,8 @@ usort($saham_ara, function($a, $b) {
   </script>
 </body>
 </html>
+
+
 
 
 
