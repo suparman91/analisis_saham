@@ -227,6 +227,7 @@ function analyze_symbol($mysqli, $symbol, $strategy = 'day') {
 
     $latestIdx = count($closes)-1;
     $latest = $prices[$latestIdx];
+    $prevLatest = $latestIdx > 0 ? $prices[$latestIdx - 1] : null;
 
     // Technical Signals Aggregation
     $techScore = 0;
@@ -402,6 +403,7 @@ function analyze_symbol($mysqli, $symbol, $strategy = 'day') {
         'rsi'=>$rsiArr,
         'macd'=>$macdArr,
         'latest'=>$latest,
+        'prev_close'=> $prevLatest ? (float)$prevLatest['close'] : null,
         'signal'=>$signal,
         'signal_details'=>implode(', ', $signals),
         'fundamental'=>$fund,

@@ -144,8 +144,9 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
     <div class="indicators">
       <div class="ind-col">
         <div><strong>Latest price:</strong> <span id="latestPrice">-</span></div>
-        <div><strong>Open price:</strong> <span id="openPrice">-</span></div>
-        <div><strong>Daily Change:</strong> <span id="changePct">-</span></div>
+        <div><strong>Open (09:00):</strong> <span id="openPrice">-</span></div>
+        <div><strong>Prev Close:</strong> <span id="prevClosePrice">-</span></div>
+        <div><strong>Perubahan vs Kemarin:</strong> <span id="changePct">-</span></div>
         <div><strong>Date:</strong> <span id="latestDate">-</span></div>
         <div><strong>Price source:</strong> <span id="latestSource" class="badge hold">-</span></div>
       </div>
@@ -211,14 +212,15 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
               let openEl = document.getElementById('openPrice');
               let openP = (p.open && !isNaN(p.open) && p.open > 0) ? Number(p.open) : null;
               if (!openP) {
-                  // Fallback to reading the open price from history chart if not in realtime payload
                   openP = openEl.innerText !== '-' ? Number(openEl.innerText.replace(/,/g, '')) : null;
               }
-              if (openP) {
+              if (openP) openEl.innerText = openP.toLocaleString();
+              // Gunakan prev_close (dari initial load) untuk hitung perubahan
+              const baseP2 = window._prevCloseVal || openP;
+              if (baseP2 && baseP2 > 0) {
                   let closeP = Number(p.price);
-                  let diff = closeP - openP;
-                  let pct = (diff / openP) * 100;
-                  openEl.innerText = openP.toLocaleString();
+                  let diff = closeP - baseP2;
+                  let pct = (diff / baseP2) * 100;
                   let cEl = document.getElementById('changePct');
                   cEl.innerText = (diff > 0 ? '+' : '') + diff.toLocaleString() + ' (' + (diff > 0 ? '+' : '') + pct.toFixed(2) + '%)';
                   cEl.style.color = diff > 0 ? 'green' : (diff < 0 ? 'red' : 'black');
@@ -379,16 +381,29 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
         // latest price/date (from DB by default)
         document.getElementById('latestPrice').innerText = data.latest ? Number(data.latest.close).toLocaleString() : '-';
         if (data.latest && data.latest.open) {
-            let openP = Number(data.latest.open);
-            let closeP = Number(data.latest.close);
-            let diff = closeP - openP;
-            let pct = (diff / openP) * 100;
-            document.getElementById('openPrice').innerText = openP.toLocaleString();
-            let cEl = document.getElementById('changePct');
-            cEl.innerText = (diff > 0 ? '+' : '') + diff.toLocaleString() + ' (' + (diff > 0 ? '+' : '') + pct.toFixed(2) + '%)';
-            cEl.style.color = diff > 0 ? 'green' : (diff < 0 ? 'red' : 'black');
+            document.getElementById('openPrice').innerText = Number(data.latest.open).toLocaleString();
         } else {
             document.getElementById('openPrice').innerText = '-';
+        }
+        // Hitung perubahan vs close KEMARIN (prev_close), bukan vs open hari ini
+        const prevCloseVal = data.prev_close ? Number(data.prev_close) : null;
+        window._prevCloseVal = prevCloseVal; // simpan untuk updateLivePrice
+        if (data.latest) {
+            document.getElementById('prevClosePrice').innerText = prevCloseVal ? prevCloseVal.toLocaleString() : '-';
+            const closeP = Number(data.latest.close);
+            const baseP = prevCloseVal || (data.latest.open ? Number(data.latest.open) : null);
+            if (baseP && baseP > 0) {
+                const diff = closeP - baseP;
+                const pct = (diff / baseP) * 100;
+                const cEl = document.getElementById('changePct');
+                cEl.innerText = (diff > 0 ? '+' : '') + diff.toLocaleString() + ' (' + (diff > 0 ? '+' : '') + pct.toFixed(2) + '%)';
+                cEl.style.color = diff > 0 ? 'green' : (diff < 0 ? 'red' : 'black');
+            } else {
+                document.getElementById('changePct').innerText = '-';
+                document.getElementById('changePct').style.color = 'black';
+            }
+        } else {
+            document.getElementById('prevClosePrice').innerText = '-';
             document.getElementById('changePct').innerText = '-';
             document.getElementById('changePct').style.color = 'black';
         }

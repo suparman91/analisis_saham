@@ -1,4 +1,9 @@
 <?php
+// Pastikan browser/proxy tidak meng-cache halaman dinamis ini
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+header('Expires: Thu, 01 Jan 1970 00:00:00 GMT');
+
 require_once __DIR__ . '/db.php';
 
 $mysqli = db_connect();
@@ -143,6 +148,13 @@ function get_mock_bandar($symbol, $volume) {
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="icon-192.png">
   <title>Dashboard Pasar IHSG</title>
   <style>
     body{font-family:Arial,Helvetica,sans-serif;margin:20px;background:#f8f9fa;}
@@ -345,6 +357,17 @@ function get_mock_bandar($symbol, $volume) {
     setTimeout(function() {
         window.location.reload();
     }, 180000); // 180000 milidetik = 3 menit
+
+    // Pendaftaran Service Worker untuk PWA Mobile App
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+            navigator.serviceWorker.register('service-worker.js').then(function(registration) {
+                console.log('PWA ServiceWorker siap dengan scope: ', registration.scope);
+            }, function(err) {
+                console.log('PWA ServiceWorker gagal didaftarkan: ', err);
+            });
+        });
+    }
 </script>
 
 </body>

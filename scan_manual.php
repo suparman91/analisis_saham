@@ -11,7 +11,7 @@
         .top-menu a:hover { background: #1e293b; color: #fff; }
         .top-menu a.active { background: #3b82f6; color: #fff; }
 
-        body { font-family: Arial, sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; }
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 1600px; margin: 0 auto; }
         .card { border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; border-radius: 5px; max-width: 400px; }
         button { 
             padding: 10px 15px; 
@@ -45,6 +45,11 @@
         .history-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         .history-table th, .history-table td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
         .history-table th { background-color: #f8f9fa; }
+        .history-header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+        .history-content { overflow-x:auto; overflow-y:auto; max-height: 340px; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px; }
+        .history-content.collapsed { display:none; }
+        .btn-toggle-history { background:#334155; font-size:13px; padding:7px 10px; }
+        #result-container { max-width: 100% !important; width: 100% !important; }
     </style>
 </head>
 <body>
@@ -85,12 +90,22 @@
             <button id="btn-swing" onclick="runScan('SWING')" style="background-color:#1e293b;">Jalankan Swing Scan</button>
             <div id="status-swing" class="status active">Menu Terbuka 24/7</div>
         </div>
+
+        <div class="card" style="border-color: #0f766e;">
+            <h3>After Close Scanner</h3>
+            <p>Jadwal Ideal: 16:05 - 18:00 WIB (Setelah Market Tutup)</p>
+            <button id="btn-after_close" onclick="runScan('AFTER_CLOSE')" style="background-color:#0f766e;">Jalankan After Close</button>
+            <div id="status-after_close" class="status active">Menu Terbuka Setelah Penutupan</div>
+        </div>
     </div>
 
     <!-- Riwayat Scan Tersimpan -->
     <div class="card" style="max-width:100%;">
-        <h3>Riwayat Scan Terakhir (Tersimpan di Database)</h3>
-        <div style="overflow-x:auto;">
+        <div class="history-header">
+            <h3 style="margin:0;">Riwayat Scan Terakhir (Tersimpan di Database)</h3>
+            <button type="button" id="btnToggleHistory" class="btn-toggle-history">Tampilkan Riwayat</button>
+        </div>
+        <div id="historyContent" class="history-content collapsed">
         <?php
         require_once "db.php";
         $db = db_connect();
@@ -128,7 +143,7 @@
     </div>
 
     <!-- Kontainer Hasil Scan -->
-    <div id="result-container" class="card" style="display: none; max-width: 800px; width: 100%;">
+    <div id="result-container" class="card" style="display: none; max-width: 100%; width: 100%;">
         <!-- Hasil dari PHP scan_bpjs_bsjp.php akan tampil di sini! -->
     </div>
 
@@ -212,6 +227,7 @@
                 .then(response => response.text())
                 .then(data => {
                     resultDiv.innerHTML = data;
+                    enhanceScanResult(resultDiv, type);
                     btn.innerText = "Selesai!";
                     setTimeout(() => btn.innerText = originalText, 1500);
                 })
@@ -221,9 +237,156 @@
                 });
         }
 
+        function tableToCSV(tableEl) {
+            const rows = Array.from(tableEl.querySelectorAll('tr'));
+            return rows.map(row => {
+                const cols = Array.from(row.querySelectorAll('th,td'));
+                return cols.map(col => {
+                    const text = (col.innerText || '').replace(/\s+/g, ' ').trim();
+                    const escaped = text.replace(/"/g, '""');
+                    return '"' + escaped + '"';
+                }).join(',');
+            }).join('\n');
+        }
+
+        function enhanceScanResult(container, scanType) {
+            const table = container.querySelector('table');
+            if (!table) return;
+
+            const allRows = Array.from(table.querySelectorAll('tr')).slice(1); // skip header
+            if (allRows.length === 0) return;
+
+            const toolbar = document.createElement('div');
+            toolbar.style.display = 'flex';
+            toolbar.style.flexWrap = 'wrap';
+            toolbar.style.gap = '10px';
+            toolbar.style.alignItems = 'center';
+            toolbar.style.margin = '12px 0';
+
+            const totalInfo = document.createElement('span');
+            totalInfo.style.fontWeight = 'bold';
+            totalInfo.style.color = '#1e293b';
+            totalInfo.innerText = 'Total hasil: ' + allRows.length + ' saham';
+
+            const perPageLabel = document.createElement('label');
+            perPageLabel.innerText = 'Baris per halaman:';
+            perPageLabel.style.fontSize = '14px';
+
+            const perPageSelect = document.createElement('select');
+            perPageSelect.style.padding = '6px';
+            perPageSelect.style.border = '1px solid #cbd5e1';
+            perPageSelect.style.borderRadius = '4px';
+            [25, 50, 100, 200].forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = String(n);
+                opt.textContent = String(n);
+                if (n === 50) opt.selected = true;
+                perPageSelect.appendChild(opt);
+            });
+
+            const btnPrev = document.createElement('button');
+            btnPrev.type = 'button';
+            btnPrev.innerText = '← Prev';
+            btnPrev.style.background = '#334155';
+
+            const pageInfo = document.createElement('span');
+            pageInfo.style.minWidth = '110px';
+            pageInfo.style.textAlign = 'center';
+            pageInfo.style.fontWeight = 'bold';
+
+            const btnNext = document.createElement('button');
+            btnNext.type = 'button';
+            btnNext.innerText = 'Next →';
+            btnNext.style.background = '#334155';
+
+            const btnExport = document.createElement('button');
+            btnExport.type = 'button';
+            btnExport.innerText = 'Export CSV';
+            btnExport.style.background = '#0f766e';
+
+            toolbar.appendChild(totalInfo);
+            toolbar.appendChild(perPageLabel);
+            toolbar.appendChild(perPageSelect);
+            toolbar.appendChild(btnPrev);
+            toolbar.appendChild(pageInfo);
+            toolbar.appendChild(btnNext);
+            toolbar.appendChild(btnExport);
+
+            table.parentElement.insertBefore(toolbar, table);
+
+            let currentPage = 1;
+            function renderPage() {
+                const perPage = Number(perPageSelect.value) || 50;
+                const totalPages = Math.max(1, Math.ceil(allRows.length / perPage));
+                if (currentPage > totalPages) currentPage = totalPages;
+
+                const start = (currentPage - 1) * perPage;
+                const end = start + perPage;
+
+                allRows.forEach((row, idx) => {
+                    row.style.display = (idx >= start && idx < end) ? '' : 'none';
+                });
+
+                pageInfo.innerText = 'Hal ' + currentPage + '/' + totalPages;
+                btnPrev.disabled = currentPage <= 1;
+                btnNext.disabled = currentPage >= totalPages;
+            }
+
+            btnPrev.addEventListener('click', () => {
+                if (currentPage > 1) {
+                    currentPage--;
+                    renderPage();
+                }
+            });
+
+            btnNext.addEventListener('click', () => {
+                const perPage = Number(perPageSelect.value) || 50;
+                const totalPages = Math.max(1, Math.ceil(allRows.length / perPage));
+                if (currentPage < totalPages) {
+                    currentPage++;
+                    renderPage();
+                }
+            });
+
+            perPageSelect.addEventListener('change', () => {
+                currentPage = 1;
+                renderPage();
+            });
+
+            btnExport.addEventListener('click', () => {
+                const csv = tableToCSV(table);
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                const now = new Date();
+                const pad = n => String(n).padStart(2, '0');
+                const stamp = now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + '_' + pad(now.getHours()) + pad(now.getMinutes());
+                a.href = url;
+                a.download = 'scan_' + (scanType || 'result').toLowerCase() + '_' + stamp + '.csv';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            });
+
+            renderPage();
+        }
+
+        function initHistoryToggle() {
+            const btn = document.getElementById('btnToggleHistory');
+            const content = document.getElementById('historyContent');
+            if (!btn || !content) return;
+
+            btn.addEventListener('click', () => {
+                const isCollapsed = content.classList.toggle('collapsed');
+                btn.innerText = isCollapsed ? 'Tampilkan Riwayat' : 'Sembunyikan Riwayat';
+            });
+        }
+
         // Jalankan update waktu setiap 1 detik
         setInterval(updateTime, 1000);
         updateTime(); // Panggil pertama kali
+        initHistoryToggle();
     </script>
 </body>
 </html>

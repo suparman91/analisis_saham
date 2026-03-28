@@ -50,8 +50,8 @@ foreach ($batches as $index => $batch) {
     $curl_handles = [];
 
     foreach ($batch as $sym) {
-        // Ambil data 6 bulan terakhir (6mo) agar rumus MA-50, MA-20, dan historis Volume bisa dihitung akurat
-        $url = 'https://query1.finance.yahoo.com/v8/finance/chart/' . urlencode($sym) . '?range=6mo&interval=1d';
+        // Ambil data 1 bulan terakhir (1mo) mengurangi beban payload
+        $url = 'https://query1.finance.yahoo.com/v8/finance/chart/' . urlencode($sym) . '?range=1mo&interval=1d';
         
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
@@ -79,14 +79,15 @@ foreach ($batches as $index => $batch) {
     }
 
     // Setelah paralel download selesai, kita parse JSON-nya
+    $mysqli->begin_transaction();
     foreach ($curl_handles as $sym => $ch) {
         $response = curl_multi_getcontent($ch);
         $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_multi_remove_handle($multi_curl, $ch);
         curl_close($ch);
 
-        // Jangan hapus .JK jika di tabel stocks pakai .JK, atau sesuaikan dengan kebutuhan database Anda
-        $clean_sym = $sym; 
+        // Gunakan simbol dengan .JK agar cocok dengan format di tabel stocks & prices
+        $clean_sym = $sym;
 
         if ($http_code == 200 && $response) {
             $j = json_decode($response, true);
@@ -131,9 +132,9 @@ foreach ($batches as $index => $batch) {
             echo "\033[31m[ERROR]\033[0m $clean_sym HTTP $http_code\n";
         }
     }
-    
-    curl_multi_close($multi_curl);
-    
+    // Commit transaction for this batch
+    $mysqli->commit();
+
     $batch_num = $index + 1;
     echo "Selesai Batch #$batch_num. Istirahat 2 detik supaya tidak ter-banned Yahoo...\n";
     sleep(2);
