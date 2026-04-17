@@ -1,9 +1,15 @@
-<!DOCTYPE html>
-<html lang="id">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manual Scan BPJP & BSJP</title>
+<?php
+require_once 'auth.php';
+require_login();
+
+require_once __DIR__ . '/db.php';
+$mysqli = db_connect();
+require_subscription($mysqli);
+?>
+<?php
+$pageTitle = 'Manual Scan BPJP & BSJP';
+?>
+<?php include 'header.php'; ?>
     <style>
         /* Navigation Menu */
         .top-menu { background: #0f172a; padding: 12px 20px; display: flex; align-items: center; gap: 15px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
@@ -51,20 +57,6 @@
         .btn-toggle-history { background:#334155; font-size:13px; padding:7px 10px; }
         #result-container { max-width: 100% !important; width: 100% !important; }
     </style>
-</head>
-<body>
-
-    <nav class="top-menu">
-        <a href="index.php">📊 Dashboard Market</a>
-        <a href="ihsg.php">&#x1F4C8; Chart IHSG</a>
-          <a href="chart.php">📈 Chart & Analisis</a>
-        <a href="scan_manual.php" class="active">🔍 Scanner BSJP/BPJP</a>
-        <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
-        <a href="ara_hunter.php">🚀 ARA Hunter</a>
-          <a href="arb_hunter.php">&#x1F4C9; ARB Hunter</a>
-        <a href="portfolio.php">&#x1F4BC; Autopilot Portofolio</a>
-        <a href="telegram_setting.php" style="margin-left:auto; background:#475569;"><img src="https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" width="14" style="vertical-align:middle;margin-right:5px;">Set Alert</a>
-    </nav>
     
     <h2>Scanner Manual Multistrategi</h2>
     <p>Waktu Server / Browser: <strong id="current-time" style="color:#007bff;">Loading...</strong></p>
@@ -388,6 +380,5 @@
         updateTime(); // Panggil pertama kali
         initHistoryToggle();
     </script>
-</body>
-</html>
+<?php include 'footer.php'; ?>
 

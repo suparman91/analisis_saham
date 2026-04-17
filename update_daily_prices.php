@@ -7,24 +7,50 @@
 
 require_once __DIR__ . '/db.php';
 $mysqli = db_connect();
+date_default_timezone_set('Asia/Jakarta');
+set_time_limit(0);
 
 echo "Mulai mengambil daftar emiten dari database...\n";
+$today = date('Y-m-d');
+
+// Ambil daftar simbol yang sudah terisi untuk hari ini agar bisa di-skip, KECUALI jika mode Paksa Update EOD.
+$updatedToday = [];
+$is_force_update = isset($forceUpdate) && $forceUpdate === true;
+
+if (!$is_force_update) {
+    $resToday = $mysqli->query("SELECT symbol FROM prices WHERE date = '" . $mysqli->real_escape_string($today) . "'");
+    if ($resToday) {
+        while ($rt = $resToday->fetch_assoc()) {
+            $updatedToday[strtoupper(trim($rt['symbol']))] = true;
+        }
+    }
+} else {
+    echo "Mode Paksa Update: Mengambil ulang SEMUA harga saham terkini...\n";
+}
+
 $symbols = [];
 $res = $mysqli->query("SELECT symbol FROM stocks");
 while ($r = $res->fetch_assoc()) {
     $sym = strtoupper(trim($r['symbol']));
+    // Skip simbol non-ekuitas/indeks atau format tidak valid
+    if ($sym === '' || !preg_match('/^[A-Z0-9]+(\.JK)?$/', $sym)) {
+        continue;
+    }
     // Pastikan berakhiran .JK untuk Yahoo Finance
     if (strpos($sym, '.JK') === false) {
         $sym .= '.JK';
     }
-    $symbols[] = $sym;
+    // Skip simbol yang sudah punya harga untuk hari ini
+    if (!isset($updatedToday[$sym])) {
+        $symbols[] = $sym;
+    }
 }
 
 $total_symbols = count($symbols);
-echo "Total emiten ditemukan: $total_symbols\n";
+echo "Total emiten yang perlu diupdate hari ini: $total_symbols\n";
 
 if ($total_symbols == 0) {
-    die("Database saham kosong. Silakan jalankan update_stocks.php dulu.\n");
+    die("Semua simbol sudah terupdate untuk tanggal $today.\n");
 }
 
 // Persiapkan MySQL Statement
@@ -50,8 +76,8 @@ foreach ($batches as $index => $batch) {
     $curl_handles = [];
 
     foreach ($batch as $sym) {
-        // Ambil data 1 bulan terakhir (1mo) mengurangi beban payload
-        $url = 'https://query1.finance.yahoo.com/v8/finance/chart/' . urlencode($sym) . '?range=1mo&interval=1d';
+        // Ambil data ringkas agar proses lebih cepat: 5 hari terakhir saja
+        $url = 'https://query1.finance.yahoo.com/v8/finance/chart/' . urlencode($sym) . '?range=5d&interval=1d';
         
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
@@ -100,15 +126,23 @@ foreach ($batches as $index => $batch) {
                     $quotes = $result['indicators']['quote'][0];
                     $updates_for_this_sym = 0;
 
-                    foreach ($timestamps as $i => $ts) {
-                        $date = date('Y-m-d', $ts);
-                        $o = $quotes['open'][$i] ?? null;
-                        $h = $quotes['high'][$i] ?? null;
-                        $l = $quotes['low'][$i] ?? null;
-                        $c = $quotes['close'][$i] ?? null;
-                        $v = $quotes['volume'][$i] ?? null;
+                    // Simpan hanya candle valid terakhir untuk mempercepat update harian.
+                    $lastIdx = -1;
+                    for ($i = count($timestamps) - 1; $i >= 0; $i--) {
+                        if (isset($quotes['close'][$i]) && $quotes['close'][$i] !== null) {
+                            $lastIdx = $i;
+                            break;
+                        }
+                    }
 
-                        // Pastikan data hari tsb bukan null
+                    if ($lastIdx >= 0) {
+                        $date = date('Y-m-d', $timestamps[$lastIdx]);
+                        $o = $quotes['open'][$lastIdx] ?? $quotes['close'][$lastIdx];
+                        $h = $quotes['high'][$lastIdx] ?? $quotes['close'][$lastIdx];
+                        $l = $quotes['low'][$lastIdx] ?? $quotes['close'][$lastIdx];
+                        $c = $quotes['close'][$lastIdx] ?? null;
+                        $v = $quotes['volume'][$lastIdx] ?? 0;
+
                         if ($c !== null) {
                             $stmt->bind_param('ssddddi', $clean_sym, $date, $o, $h, $l, $c, $v);
                             if ($stmt->execute()) {

@@ -10,7 +10,12 @@ if (!$symbol) {
 }
 
 $mysqli = db_connect();
+
 $res = analyze_symbol($mysqli, $symbol);
+$fundamental_ext = auto_fetch_fundamentals($symbol);
+if ($fundamental_ext) {
+    $res['fundamental_ext'] = $fundamental_ext;
+}
 echo json_encode($res);
 
 ?>

@@ -1,4 +1,48 @@
 <?php
+// Fetch fundamental data (EPS, PER, PBV, ROE, dsb) from Yahoo Finance summary API
+function auto_fetch_fundamentals($symbol) {
+    // Yahoo Finance API (summary)
+    $url = "https://query1.finance.yahoo.com/v10/finance/quoteSummary/" . urlencode($symbol) . "?modules=defaultKeyStatistics,financialData,price";
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    $json = curl_exec($ch);
+    curl_close($ch);
+    if (!$json) return null;
+    $data = json_decode($json, true);
+    if (!isset($data['quoteSummary']['result'][0])) return null;
+    $r = $data['quoteSummary']['result'][0];
+    $fd = isset($r['financialData']) ? $r['financialData'] : [];
+    $ks = isset($r['defaultKeyStatistics']) ? $r['defaultKeyStatistics'] : [];
+    $price = isset($r['price']) ? $r['price'] : [];
+    // Extract values safely
+    $eps = isset($ks['trailingEps']['raw']) ? $ks['trailingEps']['raw'] : null;
+    $pe = isset($ks['trailingPE']['raw']) ? $ks['trailingPE']['raw'] : null;
+    $pbv = isset($ks['priceToBook']['raw']) ? $ks['priceToBook']['raw'] : null;
+    $roe = null; // Yahoo Finance does not provide ROE directly
+    $de = isset($fd['debtToEquity']['raw']) ? $fd['debtToEquity']['raw'] : null;
+    $revenue = isset($fd['totalRevenue']['raw']) ? $fd['totalRevenue']['raw'] : null;
+    $netIncome = isset($fd['netIncomeToCommon']['raw']) ? $fd['netIncomeToCommon']['raw'] : null;
+    $bookValue = isset($fd['bookValue']['raw']) ? $fd['bookValue']['raw'] : null;
+    $currency = isset($price['currency']) ? $price['currency'] : null;
+    // ROE = Net Income / Book Value (Equity)
+    if ($netIncome !== null && $bookValue !== null && $bookValue != 0) {
+        $roe = ($netIncome / $bookValue) * 100;
+    }
+    return [
+        'eps' => $eps,
+        'pe' => $pe,
+        'pbv' => $pbv,
+        'roe' => $roe,
+        'de' => $de,
+        'revenue' => $revenue,
+        'net_income' => $netIncome,
+        'book_value' => $bookValue,
+        'currency' => $currency
+    ];
+}
 // Analysis functions: SMA, EMA, RSI, MACD, and a simple fundamental score
 require_once __DIR__ . '/db.php';
 
@@ -285,28 +329,44 @@ function analyze_symbol($mysqli, $symbol, $strategy = 'day') {
     // ==========================================
     // GLOBAL SENTIMENT AND TRADING PLAN (ROBO)
     // ==========================================
-    
-    // 1. Mock Global Sentiment Analysis (can be real APIs later)
-    // E.g., world indices, geo-politics, MSCI, exchange rate, etc.
-    $globalIssues = [
-        ['topic' => 'US-Iran Tension', 'impact' => -1, 'description' => 'Geopolitical instability affecting markets'],
-        ['topic' => 'MSCI Rebalancing', 'impact' => 0, 'description' => 'Neutral/mixed effect for broad market'],
-        ['topic' => 'Fed Rate', 'impact' => 1, 'description' => 'Dovish tilt, positive for emerging markets']
-    ];
-    
+
+    // 1. Real Global Sentiment dari Investor.id cache
+    // Cache diperbarui oleh index.php setiap 15 menit (TTL 900 detik)
     $sentimentScore = 0;
     $sentimentReasons = [];
-    foreach ($globalIssues as $issue) {
-        $sentimentScore += $issue['impact'];
-        if ($issue['impact'] !== 0) {
-            $sentimentReasons[] = $issue['topic'] . ($issue['impact'] > 0 ? ' (Bullish)' : ' (Bearish)');
+    $globalSentiment = 'NEUTRAL';
+
+    $cacheFile = __DIR__ . '/tmp_investor_sentiment.json';
+    if (file_exists($cacheFile)) {
+        $cacheAge = time() - filemtime($cacheFile);
+        $sentData = json_decode((string)file_get_contents($cacheFile), true);
+        if (is_array($sentData) && isset($sentData['label'], $sentData['score'])) {
+            $sentimentScore = (int)$sentData['score'];
+            $labelRaw = strtoupper($sentData['label']);
+            if ($labelRaw === 'BULLISH' || $labelRaw === 'POSITIF') {
+                $globalSentiment = 'BULLISH';
+            } elseif ($labelRaw === 'BEARISH' || $labelRaw === 'NEGATIF') {
+                $globalSentiment = 'BEARISH';
+            } else {
+                $globalSentiment = 'NEUTRAL';
+                // Jika skor cukup ekstrem walau label NETRAL, tetap pertimbangkan
+                if ($sentimentScore >= 3) $globalSentiment = 'BULLISH';
+                elseif ($sentimentScore <= -3) $globalSentiment = 'BEARISH';
+            }
+            if (!empty($sentData['summary'])) {
+                $sentimentReasons[] = 'Investor.id: ' . $sentData['summary'];
+            }
+            // Sertakan info staleness cache
+            if ($cacheAge > 3600) {
+                $sentimentReasons[] = 'Note: sentiment cache > 1 jam, mungkin perlu refresh index.php';
+            }
         }
     }
-    
-    $globalSentiment = 'NEUTRAL';
-    if ($sentimentScore >= 1) $globalSentiment = 'BULLISH';
-    if ($sentimentScore <= -1) $globalSentiment = 'BEARISH';
-    
+    // Fallback jika cache tidak ada: anggap NEUTRAL
+    if ($globalSentiment === 'NEUTRAL' && $sentimentScore === 0 && empty($sentimentReasons)) {
+        $sentimentReasons[] = 'Investor.id sentiment cache tidak tersedia, menggunakan NEUTRAL.';
+    }
+
     // Adjust final signal based on macro sentiment
     if ($globalSentiment === 'BEARISH' && strpos($signal, 'BUY') !== false) {
         $signal = 'HOLD'; // Downgrade buy to hold if world is burning

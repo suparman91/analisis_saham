@@ -135,11 +135,10 @@ while ($r = $resPicks->fetch_assoc()) {
     }
 }
 ?>
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>AI Stockpick Tracker</title>
+<?php
+$pageTitle = 'AI Stockpick Tracker';
+?>
+<?php include 'header.php'; ?>
   <style>
     body{font-family:Arial,Helvetica,sans-serif;margin:20px;background:#f8f9fa;}
     .container { max-width:1200px; margin:0 auto; }
@@ -180,15 +179,7 @@ while ($r = $resPicks->fetch_assoc()) {
   </style>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <div class="container">
-    <nav class="top-menu">
-        <a href="index.php">📊 Dashboard Market</a>
-        <a href="ihsg.php">&#x1F4C8; Chart IHSG</a>
-          <a href="chart.php">📈 Chart & Analisis</a>
-        <a href="scan_manual.php">🔍 Scanner BSJP/BPJP</a>
-        <a href="stockpick.php" class="active">🎯 AI Stockpick Tracker</a>
-        <a href="ara_hunter.php">🚀 ARA Hunter</a>
-        <a href="telegram_setting.php" style="margin-left:auto; background:#475569;"><img src="https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" width="14" style="vertical-align:middle;margin-right:5px;">Set Alert</a>
-    </nav>
+    <?php include 'nav.php'; ?>
     
     <h1>🎯 AI Stockpick Tracker</h1>
     <div class="subtitle">Pantau performa hasil analisis saham AI (Target Profit vs Stop Loss)</div>
@@ -543,8 +534,7 @@ while ($r = $resPicks->fetch_assoc()) {
 </script>
 <?php endif; ?>
 
-</body>
-</html>
+<?php include 'footer.php'; ?>
 
 
 

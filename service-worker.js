@@ -1,4 +1,4 @@
-const CACHE_NAME = 'analisis-saham-v3';
+const CACHE_NAME = 'analisis-saham-v4';
 
 self.addEventListener('install', event => {
   self.skipWaiting();
@@ -16,8 +16,8 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // Jangan pernah cache file PHP - selalu ambil fresh dari server
-  if (url.pathname.endsWith('.php')) {
+  // Jangan pernah cache file PHP, navigasi HTML, atau rute root - selalu ambil fresh dari server
+  if (url.pathname.endsWith('.php') || url.pathname.endsWith('/') || event.request.mode === 'navigate') {
     event.respondWith(fetch(event.request));
     return;
   }

@@ -1,0 +1,1 @@
+<?php require "db.php"; $m = db_connect(); $m->query("UPDATE robo_trades SET buy_date = REPLACE(buy_date, '2025-', '2026-')"); $m->query("UPDATE robo_trades SET sell_date = REPLACE(sell_date, '2025-', '2026-')"); echo "Dates updated."; ?>

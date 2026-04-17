@@ -106,13 +106,13 @@ if ($tipe === 'BPJP') {
     SELECT * FROM CTE_Prices 
     WHERE date = (SELECT last_date FROM TargetDate)
       AND close > ma20
-      AND volume >= (avg_vol_5 * 1.5)
+      AND volume >= (avg_vol_5 * 1.2)
       AND close > open
       AND high > low
-      AND (close - low) / (high - low) >= 0.75
+      AND (close - low) / (high - low) >= 0.60
       AND close >= 50
-      AND volume > 500000
-      AND persen_kenaikan >= 1.5
+      AND volume > 200000
+      AND persen_kenaikan >= 1.0
         ORDER BY volume DESC";
     $results = fetch_data($db_connection, $sql);
 

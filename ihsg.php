@@ -5,11 +5,10 @@ $stocks = [];
   $res = $mysqli->query('SELECT symbol,name,notation FROM stocks ORDER BY symbol');
 while ($r = $res->fetch_assoc()) $stocks[] = $r;
 ?>
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Analisis Saham IHSG</title>
+<?php
+$pageTitle = 'Analisis Saham IHSG';
+?>
+<?php include 'header.php'; ?>
   <style>
     body{font-family:Arial,Helvetica,sans-serif;margin:20px}
     #chart-container{width:900px;height:500px}
@@ -28,12 +27,6 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
     .modal h3 {margin-top:0;}
     .modal input {width:100%;box-sizing:border-box;margin:10px 0;padding:8px;}
     .modal-actions {text-align:right;}
-    /* Navigation Menu */
-    .top-menu { background: #0f172a; padding: 12px 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 15px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
-    .top-menu a { color: #cbd5e1; text-decoration: none; padding: 8px 12px; border-radius: 5px; font-weight: 500; font-size: 14px; transition: all 0.2s; white-space: nowrap; }
-    .top-menu a:hover { background: #1e293b; color: #fff; }
-    .top-menu a.active { background: #3b82f6; color: #fff; }
-    .top-menu-right { margin-left: auto; }
     @media(max-width:768px) {
         .top-menu { flex-direction: column; align-items: stretch; text-align: center; }
         .top-menu-right { margin-left: 0; margin-top: 10px; }
@@ -54,23 +47,6 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
 
 <link href="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/css/tom-select.default.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
-</head>
-<body>
-
-  <nav class="top-menu">
-    <a href="index.php">📊 Dashboard Market</a>
-    <a href="ihsg.php" class="active">&#x1F4C8; Chart IHSG</a>
-          <a href="chart.php" >📈 Chart & Analisis</a>
-    <a href="scan_manual.php">🔍 Scanner BSJP/BPJP</a>
-    <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
-    <a href="ara_hunter.php">🚀 ARA Hunter</a>
-          <a href="arb_hunter.php">&#x1F4C9; ARB Hunter</a>
-        <a href="portfolio.php">&#x1F4BC; Autopilot Portofolio</a>
-    <div class="top-menu-right" style="display: flex; gap: 10px;">
-      <a href="telegram_setting.php" style="background:#475569; padding: 8px 15px; border-radius: 5px; color: white; display:flex; align-items:center; height:18px;"><img src="https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" width="14" style="margin-right:5px;">Set Alert</a>
-      <button id="btnSettings" class="btn-settings" style="margin-top:0;">⚙️ Settings & API Key</button>
-    </div>
-  </nav>
 
   <div class="controls-container" style="margin-bottom:15px; background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; display:flex; align-items:center; gap: 10px;">
     <h2 style="margin:0; font-size:18px; color:#1e293b; display:flex; align-items:center;"> Chart & Analisis IHSG (^JKSE)</h2>
@@ -572,8 +548,7 @@ while ($r = $res->fetch_assoc()) $stocks[] = $r;
 
       window.addEventListener('DOMContentLoaded', () => { setTimeout(() => { render('^JKSE'); }, 300); });
   </script>
-</body>
-</html>
+<?php include 'footer.php'; ?>
 
 
 

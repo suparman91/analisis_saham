@@ -1,8 +1,11 @@
 <?php
+require_once 'auth.php';
+require_login();
+
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/telegram_crypto.php';
-
 $mysqli = db_connect();
+require_subscription($mysqli);
 
 // Auto-Create Tabel Penampung Chat ID (Jika Belum Ada)
 $stmt_create = "CREATE TABLE IF NOT EXISTS telegram_subscribers (
@@ -42,11 +45,10 @@ if (isset($_GET['del'])) {
 // Mengambil Data Untuk Ditampilkan
 $res = $mysqli->query("SELECT * FROM telegram_subscribers ORDER BY id DESC");
 ?>
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Pengaturan Telegram - ARA Hunter</title>
+<?php
+$pageTitle = 'Pengaturan Telegram - ARA Hunter';
+?>
+<?php include 'header.php'; ?>
   <style>
     body { font-family: Arial, Helvetica, sans-serif; background: #f8f9fa; margin: 20px; }
     .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
@@ -70,8 +72,6 @@ $res = $mysqli->query("SELECT * FROM telegram_subscribers ORDER BY id DESC");
 
     .alert { padding: 10px; background: #dcfce7; color: #065f46; border-left: 4px solid #10b981; margin-bottom: 15px; }
   </style>
-</head>
-<body>
   <div class="container">
       <a href="ara_hunter.php" class="nav-link">← Kembali ke ARA Hunter</a>
       
@@ -137,5 +137,4 @@ $res = $mysqli->query("SELECT * FROM telegram_subscribers ORDER BY id DESC");
           </tbody>
       </table>
   </div>
-</body>
-</html>
+<?php include 'footer.php'; ?>

@@ -1,6 +1,10 @@
 <?php
+require_once 'auth.php';
+require_login();
+
 require_once __DIR__ . '/db.php';
 $mysqli = db_connect();
+require_subscription($mysqli);
 
 function getFraksi($price) {
     if ($price < 200) return 1;
@@ -236,12 +240,11 @@ usort($saham_ara, function($a, $b) {
     return $b['prob'] <=> $a['prob'];
 });
 ?>
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>ARB Hunter (Saham Potensi Turun) & Kalkulator - Sistem Analisis Saham</title>
-  <style>
+<?php
+$pageTitle = 'ARB Hunter (Saham Potensi Turun) & Kalkulator - Sistem Analisis Saham';
+require_once __DIR__ . '/header.php';
+?>
+<style>
     body{font-family:Arial,Helvetica,sans-serif;margin:20px;background:#f8f9fa;}
     .container { max-width:1200px; margin:0 auto; }
     h1 { color:#333; margin-bottom: 5px;}
@@ -288,19 +291,7 @@ usort($saham_ara, function($a, $b) {
     .plan-box { background: #eff6ff; border: 1px solid #bfdbfe; padding: 10px; border-radius: 6px; margin-top: 15px; }
     .plan-title { font-weight: bold; color: #1d4ed8; margin-bottom: 10px; font-size: 13px; }
   </style>
-</head>
-<body>
-  <div class="container">
-      <nav class="top-menu">
-        <a href="index.php">📊 Dashboard Market</a>
-        <a href="ihsg.php">&#x1F4C8; Chart IHSG</a>
-          <a href="chart.php">📈 Chart & Analisis</a>
-        <a href="scan_manual.php">🔍 Scanner BSJP/BPJP</a>
-        <a href="stockpick.php">🎯 AI Stockpick Tracker</a>
-        <a href="arb_hunter.php" class="active">📉 ARB Hunter</a>
-        <a href="portfolio.php">&#x1F4BC; Autopilot Portofolio</a>
-        <a href="telegram_setting.php" style="margin-left:auto; background:#475569;"><img src="https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" width="14" style="vertical-align:middle;margin-right:5px;">Set Alert</a>
-      </nav>
+<div class="container">
 
       <h1>📉 ARB Hunter (Saham Potensi Turun) & Kalkulator Fraksi</h1>
       <p class="subtitle">Berdasarkan Regulasi Simetris BEI (4 September 2023)</p>
@@ -555,8 +546,7 @@ usort($saham_ara, function($a, $b) {
           toggleRefresh();
       };
   </script>
-</body>
-</html>
+<?php require_once __DIR__ . '/footer.php'; ?>
 
 
 
