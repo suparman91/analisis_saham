@@ -280,9 +280,9 @@ function analyze_symbol($mysqli, $symbol, $strategy = 'day') {
     // SMA Crossover
     if ($sma5[$latestIdx] !== null && $sma20[$latestIdx] !== null) {
         if ($sma5[$latestIdx] > $sma20[$latestIdx]) {
-            $techScore += 1; $signals[] = 'SMA Bullish';
+            $techScore += 1; $signals[] = 'Golden Cross (SMA5 > SMA20)';
         } else {
-            $techScore -= 1; $signals[] = 'SMA Bearish';
+            $techScore -= 1; $signals[] = 'Death Cross (SMA5 < SMA20)';
         }
     }
     
@@ -327,53 +327,63 @@ function analyze_symbol($mysqli, $symbol, $strategy = 'day') {
     $fundAnalysis = fundamental_score($fund);
     
     // ==========================================
-    // GLOBAL SENTIMENT AND TRADING PLAN (ROBO)
+    // SENTIMEN PER SAHAM (DARI FILE sentimen_saham.json) ATAU GLOBAL
     // ==========================================
-
-    // 1. Real Global Sentiment dari Investor.id cache
-    // Cache diperbarui oleh index.php setiap 15 menit (TTL 900 detik)
     $sentimentScore = 0;
     $sentimentReasons = [];
     $globalSentiment = 'NEUTRAL';
-
-    $cacheFile = __DIR__ . '/tmp_investor_sentiment.json';
-    if (file_exists($cacheFile)) {
-        $cacheAge = time() - filemtime($cacheFile);
-        $sentData = json_decode((string)file_get_contents($cacheFile), true);
-        if (is_array($sentData) && isset($sentData['label'], $sentData['score'])) {
-            $sentimentScore = (int)$sentData['score'];
-            $labelRaw = strtoupper($sentData['label']);
-            if ($labelRaw === 'BULLISH' || $labelRaw === 'POSITIF') {
-                $globalSentiment = 'BULLISH';
-            } elseif ($labelRaw === 'BEARISH' || $labelRaw === 'NEGATIF') {
-                $globalSentiment = 'BEARISH';
-            } else {
-                $globalSentiment = 'NEUTRAL';
-                // Jika skor cukup ekstrem walau label NETRAL, tetap pertimbangkan
-                if ($sentimentScore >= 3) $globalSentiment = 'BULLISH';
-                elseif ($sentimentScore <= -3) $globalSentiment = 'BEARISH';
-            }
-            if (!empty($sentData['summary'])) {
-                $sentimentReasons[] = 'Investor.id: ' . $sentData['summary'];
-            }
-            // Sertakan info staleness cache
-            if ($cacheAge > 3600) {
-                $sentimentReasons[] = 'Note: sentiment cache > 1 jam, mungkin perlu refresh index.php';
-            }
+    $sahamSentiment = null;
+    $sahamSentimentFile = __DIR__ . '/sentimen_saham.json';
+    if (file_exists($sahamSentimentFile)) {
+        $sahamSentiments = json_decode(file_get_contents($sahamSentimentFile), true);
+        if (is_array($sahamSentiments) && isset($sahamSentiments[$symbol])) {
+            $s = $sahamSentiments[$symbol];
+            $globalSentiment = isset($s['sentiment']) ? strtoupper($s['sentiment']) : 'NEUTRAL';
+            $sentimentScore = isset($s['score']) ? (int)$s['score'] : 0;
+            $src = isset($s['source']) ? $s['source'] : 'unknown';
+            $summary = isset($s['summary']) ? $s['summary'] : '';
+            $sentimentReasons[] = strtoupper($src) . ': ' . $summary;
+            $sahamSentiment = $s; // Simpan detail jika ingin dipakai di UI
         }
     }
-    // Fallback jika cache tidak ada: anggap NEUTRAL
-    if ($globalSentiment === 'NEUTRAL' && $sentimentScore === 0 && empty($sentimentReasons)) {
-        $sentimentReasons[] = 'Investor.id sentiment cache tidak tersedia, menggunakan NEUTRAL.';
+    if (!$sahamSentiment) {
+        // 1. Real Global Sentiment dari Investor.id cache
+        $cacheFile = __DIR__ . '/tmp_investor_sentiment.json';
+        if (file_exists($cacheFile)) {
+            $cacheAge = time() - filemtime($cacheFile);
+            $sentData = json_decode((string)file_get_contents($cacheFile), true);
+            if (is_array($sentData) && isset($sentData['label'], $sentData['score'])) {
+                $sentimentScore = (int)$sentData['score'];
+                $labelRaw = strtoupper($sentData['label']);
+                if ($labelRaw === 'BULLISH' || $labelRaw === 'POSITIF') {
+                    $globalSentiment = 'BULLISH';
+                } elseif ($labelRaw === 'BEARISH' || $labelRaw === 'NEGATIF') {
+                    $globalSentiment = 'BEARISH';
+                } else {
+                    $globalSentiment = 'NEUTRAL';
+                    if ($sentimentScore >= 3) $globalSentiment = 'BULLISH';
+                    elseif ($sentimentScore <= -3) $globalSentiment = 'BEARISH';
+                }
+                if (!empty($sentData['summary'])) {
+                    $sentimentReasons[] = 'Investor.id: ' . $sentData['summary'];
+                }
+                if ($cacheAge > 3600) {
+                    $sentimentReasons[] = 'Note: sentiment cache > 1 jam, mungkin perlu refresh index.php';
+                }
+            }
+        }
+        if ($globalSentiment === 'NEUTRAL' && $sentimentScore === 0 && empty($sentimentReasons)) {
+            $sentimentReasons[] = 'Investor.id sentiment cache tidak tersedia, menggunakan NEUTRAL.';
+        }
     }
 
-    // Adjust final signal based on macro sentiment
+    // Adjust final signal based on sentiment
     if ($globalSentiment === 'BEARISH' && strpos($signal, 'BUY') !== false) {
-        $signal = 'HOLD'; // Downgrade buy to hold if world is burning
-        $signals[] = 'Downgraded due to Global Bearish sentiment';
+        $signal = 'HOLD';
+        $signals[] = 'Downgraded due to Bearish sentiment';
     } else if ($globalSentiment === 'BULLISH' && $signal === 'HOLD') {
-        $signal = 'BUY'; // Upgrade hold to buy if world is pumping
-        $signals[] = 'Upgraded due to Global Bullish sentiment';
+        $signal = 'BUY';
+        $signals[] = 'Upgraded due to Bullish sentiment';
     }
 
     // 2. Trading Plan Calculation (Entry, TP, SL)
@@ -471,6 +481,7 @@ function analyze_symbol($mysqli, $symbol, $strategy = 'day') {
         'fund_status'=> $fundAnalysis ? $fundAnalysis['status'] : 'N/A',
         'global_sentiment' => $globalSentiment,
         'global_sentiment_details' => implode(', ', $sentimentReasons) ?: 'No major catalysts',
+        'saham_sentiment' => $sahamSentiment,
         'trading_plan' => $trading_plan
     ];
 }

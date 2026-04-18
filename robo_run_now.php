@@ -7,6 +7,9 @@ require_once __DIR__ . '/analyze.php';
 
 date_default_timezone_set('Asia/Jakarta');
 
+$mysqli = db_connect();
+require_subscription($mysqli);
+
 $user_id = get_user_id();
 $TP_PCT = 0.05;
 $SL_PCT = -0.03;
@@ -14,35 +17,6 @@ $MAX_ALLOC = 10000000;
 $TARGET_POSITIONS = 5;
 $ALLIN_SCORE = 90;
 $actions = [];
-$sell_count = 0;
-$buy_count = 0;
-$candidate_count = 0;
-$hold_notes = [];
-
-function ensureRoboAuditTable($mysqli) {
-    $mysqli->query("CREATE TABLE IF NOT EXISTS robo_audit_logs (
-        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        run_type VARCHAR(20) NOT NULL,
-        action_summary VARCHAR(255) NOT NULL,
-        decision_detail TEXT NULL,
-        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_user_created (user_id, created_at)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-}
-
-function writeRoboAudit($mysqli, $userId, $runType, $summary, $detail) {
-    $stmt = $mysqli->prepare("INSERT INTO robo_audit_logs (user_id, run_type, action_summary, decision_detail) VALUES (?, ?, ?, ?)");
-    if ($stmt) {
-        $stmt->bind_param("isss", $userId, $runType, $summary, $detail);
-        $stmt->execute();
-        $stmt->close();
-    }
-}
-
-$mysqli = db_connect();
-ensureRoboAuditTable($mysqli);
-require_subscription($mysqli);
 
 function getRealtimePriceYahoo($symbol) {
     static $cache = [];
@@ -115,6 +89,24 @@ while ($open && ($t = $open->fetch_assoc())) {
     $sell = false;
     $reason = '';
 
+    // Auto-serok: jika turun >5% dari harga beli, jangan langsung cutloss, lakukan averaging down jika ada cash cukup
+    if ($pct <= -0.05 && $balance > 1000000) {
+        // Boleh serok jika belum pernah averaging down untuk trade ini (atau bisa tambahkan flag di DB jika ingin lebih advance)
+        $lots_serok = (int)floor(min($balance, 3000000) / ($currPrice * 100)); // max 3jt per serok
+        if ($lots_serok > 0) {
+            $buyValue = $lots_serok * 100 * $currPrice;
+            $symEsc = $mysqli->real_escape_string($sym);
+            $reasonSerok = 'Averaging Down (Serok AI)';
+            $reasonEsc = $mysqli->real_escape_string($reasonSerok);
+            $buyDate = date('Y-m-d');
+            $mysqli->query("INSERT INTO robo_trades (user_id, symbol, buy_price, buy_date, buy_reason, lots, status) VALUES ({$user_id}, '{$symEsc}', {$currPrice}, '{$buyDate}', '{$reasonEsc}', {$lots_serok}, 'OPEN')");
+            $mysqli->query("UPDATE users SET robo_balance = robo_balance - {$buyValue} WHERE id = {$user_id}");
+            $balance -= $buyValue;
+            $actions[] = 'SEROK ' . $sym . ' (' . $lots_serok . ' lot)';
+            continue; // Lewati cutloss, beri kesempatan rebound
+        }
+    }
+
     if ($pct >= $TP_PCT) {
         $sell = true;
         $reason = 'Take Profit (+' . round($pct * 100, 2) . '%)';
@@ -133,7 +125,6 @@ while ($open && ($t = $open->fetch_assoc())) {
         $mysqli->query("UPDATE robo_trades SET status='CLOSED', sell_price={$currPrice}, sell_date='{$sellDate}', sell_reason='{$reasonEsc}', profit_loss_rp={$pl}, profit_loss_pct=" . ($pct * 100) . " WHERE id={$tid} AND user_id={$user_id}");
         $mysqli->query("UPDATE users SET robo_balance = robo_balance + {$value} WHERE id = {$user_id}");
         $balance += $value;
-        $sell_count++;
 
         $actions[] = 'SELL ' . $sym . ' (' . round($pct * 100, 2) . '%)';
     }
@@ -208,10 +199,6 @@ if ($balance > 1000000) {
         usort($buyCandidates, function ($a, $b) {
             return ($b['score'] ?? 0) <=> ($a['score'] ?? 0);
         });
-        $candidate_count = count($buyCandidates);
-        if ($candidate_count === 0) {
-            $hold_notes[] = 'Tidak ada kandidat yang lolos sinyal Golden Cross + volume breakout';
-        }
 
         $bought = 0;
         foreach ($buyCandidates as $cand) {
@@ -221,55 +208,34 @@ if ($balance > 1000000) {
 
             $currentOpenCount = $openCount + $bought;
             $remainingSlots = max(1, $TARGET_POSITIONS - $currentOpenCount);
-            $equalAlloc = (float)floor($balance / $remainingSlots);
-            $isAllIn = (($cand['score'] ?? 0) >= $ALLIN_SCORE) && ($currentOpenCount === 0);
-
-            if ($isAllIn) {
-                $alloc = $balance;
-            } else {
-                $alloc = min($MAX_ALLOC, $equalAlloc);
-            }
-
+            // --- Pembagian modal proporsional sesuai score ---
+            $totalScore = 0;
+            foreach ($buyCandidates as $bc) { $totalScore += $bc['score']; }
+            $portion = $totalScore > 0 ? ($cand['score'] / $totalScore) : 0;
+            $alloc = floor($portion * min($balance, $MAX_ALLOC * $remainingSlots));
             if ($alloc < 1000000) {
                 continue;
             }
-
             $buyPrice = getRealtimePriceYahoo($cand['symbol']);
             if ($buyPrice <= 0) {
                 $buyPrice = (float)$cand['price'];
             }
-
             $lots = (int)floor($alloc / ($buyPrice * 100));
             if ($lots <= 0) {
                 continue;
             }
-
             $buyValue = $lots * 100 * $buyPrice;
             $symEsc = $mysqli->real_escape_string($cand['symbol']);
             $reason = $cand['reason'];
-            if ($isAllIn) {
-                $reason .= ' | High Conviction ALL-IN';
-            }
             $reasonEsc = $mysqli->real_escape_string($reason);
             $buyDate = date('Y-m-d');
-
             $mysqli->query("INSERT INTO robo_trades (user_id, symbol, buy_price, buy_date, buy_reason, lots, status) VALUES ({$user_id}, '{$symEsc}', {$buyPrice}, '{$buyDate}', '{$reasonEsc}', {$lots}, 'OPEN')");
             $mysqli->query("UPDATE users SET robo_balance = robo_balance - {$buyValue} WHERE id = {$user_id}");
             $balance -= $buyValue;
-            $buy_count++;
-
             $actions[] = 'BUY ' . $cand['symbol'] . ' (' . $lots . ' lot, score ' . ($cand['score'] ?? 0) . ')';
             $bought++;
         }
-
-        if ($buy_count === 0 && $candidate_count > 0) {
-            $hold_notes[] = 'Ada kandidat, namun tidak lolos alokasi/lot minimum pada run ini';
-        }
-    } else {
-        $hold_notes[] = 'Posisi OPEN sudah penuh (10 saham)';
     }
-} else {
-    $hold_notes[] = 'Saldo kas di bawah Rp 1.000.000';
 }
 
 if (count($actions) === 0) {
@@ -280,17 +246,6 @@ if (count($actions) === 0) {
         $msg .= ', ...';
     }
 }
-
-$summary_parts = [];
-if ($buy_count > 0) $summary_parts[] = "BUY {$buy_count}";
-if ($sell_count > 0) $summary_parts[] = "SELL {$sell_count}";
-if (empty($summary_parts)) $summary_parts[] = 'HOLD';
-$audit_summary = implode(', ', $summary_parts);
-$audit_detail = "Candidates: {$candidate_count}";
-if (!empty($hold_notes)) {
-    $audit_detail .= ' | Notes: ' . implode('; ', $hold_notes);
-}
-writeRoboAudit($mysqli, $user_id, 'manual', $audit_summary, $audit_detail);
 
 header('Location: portfolio.php?robo_run=ok&msg=' . urlencode($msg));
 exit;

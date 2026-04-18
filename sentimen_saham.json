@@ -1,0 +1,20 @@
+{
+  "BBCA": {
+    "source": "investor.id",
+    "sentiment": "BULLISH",
+    "score": 4,
+    "summary": "Banyak berita positif, aksi buy asing meningkat"
+  },
+  "BBRI": {
+    "source": "tradingview",
+    "sentiment": "NEUTRAL",
+    "score": 0,
+    "summary": "Volume stabil, belum ada katalis baru"
+  },
+  "TLKM": {
+    "source": "investor.id",
+    "sentiment": "BEARISH",
+    "score": -3,
+    "summary": "Tekanan jual asing, berita negatif sektor telekomunikasi"
+  }
+}

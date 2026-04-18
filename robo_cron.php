@@ -82,28 +82,6 @@ function getRealtimePriceYahoo($symbol) {
     return $price;
 }
 
-function ensureRoboAuditTable($mysqli) {
-    $mysqli->query("CREATE TABLE IF NOT EXISTS robo_audit_logs (
-        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        run_type VARCHAR(20) NOT NULL,
-        action_summary VARCHAR(255) NOT NULL,
-        decision_detail TEXT NULL,
-        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_user_created (user_id, created_at)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-}
-
-function writeRoboAudit($mysqli, $userId, $runType, $summary, $detail) {
-    $stmt = $mysqli->prepare("INSERT INTO robo_audit_logs (user_id, run_type, action_summary, decision_detail) VALUES (?, ?, ?, ?)");
-    if ($stmt) {
-        $stmt->bind_param("isss", $userId, $runType, $summary, $detail);
-        $stmt->execute();
-        $stmt->close();
-    }
-}
-ensureRoboAuditTable($mysqli);
-
 echo "[ ROBO TRADER AI EXECUTION ]\n";
 echo "Date: " . date('Y-m-d H:i:s') . "\n";
 
@@ -127,10 +105,6 @@ while ($users && ($u = $users->fetch_assoc())) {
 
     echo "-- User #{$uid} ({$u['email']}) --\n";
     $balance = (float)$u['robo_balance'];
-    $sell_count = 0;
-    $buy_count = 0;
-    $candidate_count = 0;
-    $hold_notes = [];
 
     // 1. CHECK OPEN POSITIONS (EXIT STRATEGY)
     $open = $mysqli->query("SELECT * FROM robo_trades WHERE status = 'OPEN' AND user_id = {$uid}");
@@ -172,7 +146,6 @@ while ($users && ($u = $users->fetch_assoc())) {
             $mysqli->query("UPDATE robo_trades SET status='CLOSED', sell_price={$curr_p}, sell_date='{$curr_date}', sell_reason='{$sellReasonEsc}', profit_loss_rp={$pl}, profit_loss_pct=" . ($pct * 100) . " WHERE id={$tid} AND user_id={$uid}");
             $mysqli->query("UPDATE users SET robo_balance = robo_balance + {$val} WHERE id = {$uid}");
             $balance += $val;
-            $sell_count++;
             echo "SELL [U{$uid}] {$sym} @ {$curr_p}. Reason: {$reason}. P/L: Rp {$pl}\n";
 
             $pct_fmt = number_format($pct * 100, 2);
@@ -185,10 +158,6 @@ while ($users && ($u = $users->fetch_assoc())) {
     // 2. CHECK ALGO SIGNALS (ENTRY STRATEGY)
     if ($balance <= 1000000) {
         echo "Out of cash [U{$uid}]! Balance: Rp " . number_format($balance) . "\n";
-        $hold_notes[] = 'Saldo kas di bawah Rp 1.000.000';
-        $summary = ($sell_count > 0 ? "SELL {$sell_count}" : 'HOLD');
-        $detail = 'Candidates: 0 | Notes: ' . implode('; ', $hold_notes);
-        writeRoboAudit($mysqli, $uid, 'cron', $summary, $detail);
         continue;
     }
 
@@ -197,10 +166,6 @@ while ($users && ($u = $users->fetch_assoc())) {
 
     if ($open_count >= 10) {
         echo "Portfolio is FULL [U{$uid}] (10 stocks max). Waiting for SL/TP.\n";
-        $hold_notes[] = 'Posisi OPEN sudah penuh (10 saham)';
-        $summary = ($sell_count > 0 ? "SELL {$sell_count}" : 'HOLD');
-        $detail = 'Candidates: 0 | Notes: ' . implode('; ', $hold_notes);
-        writeRoboAudit($mysqli, $uid, 'cron', $summary, $detail);
         continue;
     }
 
@@ -261,10 +226,6 @@ while ($users && ($u = $users->fetch_assoc())) {
     usort($buy_candidates, function ($a, $b) {
         return ($b['score'] ?? 0) <=> ($a['score'] ?? 0);
     });
-    $candidate_count = count($buy_candidates);
-    if ($candidate_count === 0) {
-        $hold_notes[] = 'Tidak ada kandidat yang lolos sinyal Golden Cross + volume breakout';
-    }
 
     $b = 0;
     foreach ($buy_candidates as $cand) {
@@ -317,23 +278,7 @@ while ($users && ($u = $users->fetch_assoc())) {
         sendRoboAlert($mysqli, $msg);
 
         $b++;
-        $buy_count++;
     }
-
-    if ($buy_count === 0 && $candidate_count > 0) {
-        $hold_notes[] = 'Ada kandidat, namun tidak lolos alokasi/lot minimum pada run ini';
-    }
-
-    $summary_parts = [];
-    if ($buy_count > 0) $summary_parts[] = "BUY {$buy_count}";
-    if ($sell_count > 0) $summary_parts[] = "SELL {$sell_count}";
-    if (empty($summary_parts)) $summary_parts[] = 'HOLD';
-    $summary = implode(', ', $summary_parts);
-    $detail = "Candidates: {$candidate_count}";
-    if (!empty($hold_notes)) {
-        $detail .= ' | Notes: ' . implode('; ', $hold_notes);
-    }
-    writeRoboAudit($mysqli, $uid, 'cron', $summary, $detail);
 }
 
 echo "Robo execution done.\n";
