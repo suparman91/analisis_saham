@@ -1,3 +1,16 @@
+// Fungsi cek jam bursa BEI
+function is_bursa_open() {
+    $now = new DateTime('now', new DateTimeZone('Asia/Jakarta'));
+    $day = $now->format('N'); // 1=Senin, ..., 5=Jumat
+    $time = $now->format('H:i');
+
+    if ($day >= 1 && $day <= 4) { // Senin-Kamis
+        return ($time >= '09:00' && $time <= '12:00') || ($time >= '13:30' && $time <= '15:49');
+    } elseif ($day == 5) { // Jumat
+        return ($time >= '09:00' && $time <= '11:30') || ($time >= '14:00' && $time <= '15:49');
+    }
+    return false; // Sabtu/Minggu
+}
 <?php
 require_once __DIR__ . '/auth.php';
 require_login();
@@ -108,6 +121,16 @@ while ($open && ($t = $open->fetch_assoc())) {
             $mysqli->query("UPDATE users SET robo_balance = robo_balance - {$buyValue} WHERE id = {$user_id}");
             $balance -= $buyValue;
             $actions[] = 'SEROK ' . $sym . ' (' . $lots_serok . ' lot, avg: ' . round($new_avg_price,2) . ')';
+            // Audit log SEROK
+            $log_stmt = $mysqli->prepare("INSERT INTO robo_audit_log (user_id, symbol, action, price, lots, reason) VALUES (?, ?, ?, ?, ?, ?)");
+            if ($log_stmt) {
+                $log_action = 'SEROK';
+                $log_reason = $reasonSerok;
+                $log_stmt->bind_param("issdis", $user_id, $sym, $log_action, $currPrice, $lots_serok, $log_reason);
+                $log_stmt->execute();
+            } else {
+                error_log('Prepare failed (SEROK): ' . $mysqli->error);
+            }
             continue; // Lewati cutloss, beri kesempatan rebound
         }
     }
@@ -121,17 +144,41 @@ while ($open && ($t = $open->fetch_assoc())) {
     }
 
     if ($sell) {
-        $lots = (int)$t['lots'];
-        $tid = (int)$t['id'];
-        $pl = ($currPrice - $buyPrice) * ($lots * 100);
-        $value = $currPrice * $lots * 100;
-        $reasonEsc = $mysqli->real_escape_string($reason);
+        if (is_bursa_open()) {
+            $lots = (int)$t['lots'];
+            $tid = (int)$t['id'];
+            $pl = ($currPrice - $buyPrice) * ($lots * 100);
+            $value = $currPrice * $lots * 100;
+            $reasonEsc = $mysqli->real_escape_string($reason);
 
-        $mysqli->query("UPDATE robo_trades SET status='CLOSED', sell_price={$currPrice}, sell_date='{$sellDate}', sell_reason='{$reasonEsc}', profit_loss_rp={$pl}, profit_loss_pct=" . ($pct * 100) . " WHERE id={$tid} AND user_id={$user_id}");
-        $mysqli->query("UPDATE users SET robo_balance = robo_balance + {$value} WHERE id = {$user_id}");
-        $balance += $value;
+            $mysqli->query("UPDATE robo_trades SET status='CLOSED', sell_price={$currPrice}, sell_date='{$sellDate}', sell_reason='{$reasonEsc}', profit_loss_rp={$pl}, profit_loss_pct=" . ($pct * 100) . " WHERE id={$tid} AND user_id={$user_id}");
+            $mysqli->query("UPDATE users SET robo_balance = robo_balance + {$value} WHERE id = {$user_id}");
+            $balance += $value;
 
-        $actions[] = 'SELL ' . $sym . ' (' . round($pct * 100, 2) . '%)';
+            $actions[] = 'SELL ' . $sym . ' (' . round($pct * 100, 2) . '%)';
+            // Audit log SELL
+            $log_stmt = $mysqli->prepare("INSERT INTO robo_audit_log (user_id, symbol, action, price, lots, reason) VALUES (?, ?, ?, ?, ?, ?)");
+            if ($log_stmt) {
+                $log_action = 'SELL';
+                $log_reason = $reason;
+                $log_stmt->bind_param("issdis", $user_id, $sym, $log_action, $currPrice, $lots, $log_reason);
+                $log_stmt->execute();
+            } else {
+                error_log('Prepare failed (SELL): ' . $mysqli->error);
+            }
+        } else {
+            // Di luar jam bursa, skip jual dan catat audit
+            $actions[] = 'SKIP SELL ' . $sym . ' (di luar jam bursa)';
+            $log_stmt = $mysqli->prepare("INSERT INTO robo_audit_log (user_id, symbol, action, price, lots, reason) VALUES (?, ?, ?, ?, ?, ?)");
+            if ($log_stmt) {
+                $log_action = 'SKIP_SELL';
+                $log_reason = 'Jual tertunda, di luar jam bursa';
+                $log_stmt->bind_param("issdis", $user_id, $sym, $log_action, $currPrice, $lots, $log_reason);
+                $log_stmt->execute();
+            } else {
+                error_log('Prepare failed (SKIP_SELL): ' . $mysqli->error);
+            }
+        }
     }
 }
 
@@ -223,7 +270,19 @@ if ($balance > 1000000) {
             }
             $buyPrice = getRealtimePriceYahoo($cand['symbol']);
             if ($buyPrice <= 0) {
-                $buyPrice = (float)$cand['price'];
+                // Jika harga real-time gagal, skip pembelian dan log pesan
+                $actions[] = 'SKIP ' . $cand['symbol'] . ' (harga real-time tidak tersedia, pembelian dibatalkan)';
+                // Audit log SKIP
+                $log_stmt = $mysqli->prepare("INSERT INTO robo_audit_log (user_id, symbol, action, price, lots, reason) VALUES (?, ?, ?, ?, ?, ?)");
+                if ($log_stmt) {
+                    $log_action = 'SKIP';
+                    $log_reason = 'Harga real-time tidak tersedia';
+                    $log_stmt->bind_param("issdis", $user_id, $cand['symbol'], $log_action, 0, 0, $log_reason);
+                    $log_stmt->execute();
+                } else {
+                    error_log('Prepare failed (SKIP): ' . $mysqli->error);
+                }
+                continue;
             }
             $lots = (int)floor($alloc / ($buyPrice * 100));
             if ($lots <= 0) {
@@ -238,6 +297,16 @@ if ($balance > 1000000) {
             $mysqli->query("UPDATE users SET robo_balance = robo_balance - {$buyValue} WHERE id = {$user_id}");
             $balance -= $buyValue;
             $actions[] = 'BUY ' . $cand['symbol'] . ' (' . $lots . ' lot, score ' . ($cand['score'] ?? 0) . ')';
+            // Audit log BUY
+            $log_stmt = $mysqli->prepare("INSERT INTO robo_audit_log (user_id, symbol, action, price, lots, reason) VALUES (?, ?, ?, ?, ?, ?)");
+            if ($log_stmt) {
+                $log_action = 'BUY';
+                $log_reason = $reason;
+                $log_stmt->bind_param("issdis", $user_id, $cand['symbol'], $log_action, $buyPrice, $lots, $log_reason);
+                $log_stmt->execute();
+            } else {
+                error_log('Prepare failed (BUY): ' . $mysqli->error);
+            }
             $bought++;
         }
     }
