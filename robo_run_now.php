@@ -89,9 +89,8 @@ while ($open && ($t = $open->fetch_assoc())) {
     $sell = false;
     $reason = '';
 
-    // Auto-serok: jika turun >5% dari harga beli, jangan langsung cutloss, lakukan averaging down jika ada cash cukup
+    // Auto-serok: jika turun >5% dari harga beli, lakukan averaging down jika ada cash cukup
     if ($pct <= -0.05 && $balance > 1000000) {
-        // Boleh serok jika belum pernah averaging down untuk trade ini (atau bisa tambahkan flag di DB jika ingin lebih advance)
         $lots_serok = (int)floor(min($balance, 3000000) / ($currPrice * 100)); // max 3jt per serok
         if ($lots_serok > 0) {
             $buyValue = $lots_serok * 100 * $currPrice;
@@ -99,10 +98,16 @@ while ($open && ($t = $open->fetch_assoc())) {
             $reasonSerok = 'Averaging Down (Serok AI)';
             $reasonEsc = $mysqli->real_escape_string($reasonSerok);
             $buyDate = date('Y-m-d');
-            $mysqli->query("INSERT INTO robo_trades (user_id, symbol, buy_price, buy_date, buy_reason, lots, status) VALUES ({$user_id}, '{$symEsc}', {$currPrice}, '{$buyDate}', '{$reasonEsc}', {$lots_serok}, 'OPEN')");
+            // Hitung harga rata-rata baru dan lot baru
+            $old_lots = (int)$t['lots'];
+            $old_price = (float)$t['buy_price'];
+            $new_lots = $old_lots + $lots_serok;
+            $new_avg_price = (($old_price * $old_lots) + ($currPrice * $lots_serok)) / $new_lots;
+            // Update posisi lama (lot, harga rata-rata, tanggal beli, alasan)
+            $mysqli->query("UPDATE robo_trades SET buy_price={$new_avg_price}, lots={$new_lots}, buy_date='{$buyDate}', buy_reason='{$reasonEsc}' WHERE id=" . (int)$t['id']);
             $mysqli->query("UPDATE users SET robo_balance = robo_balance - {$buyValue} WHERE id = {$user_id}");
             $balance -= $buyValue;
-            $actions[] = 'SEROK ' . $sym . ' (' . $lots_serok . ' lot)';
+            $actions[] = 'SEROK ' . $sym . ' (' . $lots_serok . ' lot, avg: ' . round($new_avg_price,2) . ')';
             continue; // Lewati cutloss, beri kesempatan rebound
         }
     }

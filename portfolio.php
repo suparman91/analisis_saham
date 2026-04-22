@@ -79,6 +79,17 @@ if ($res_bal && $res_bal->num_rows > 0) {
     $balance = 100000000;
 }
 
+// --- AUTO RUN ROBOT: jalankan robot setiap kali halaman dibuka (hanya untuk user login & berlangganan) ---
+if (!isset($_GET['robo_run']) && !isset($_GET['no_auto_robo'])) {
+    // Cegah infinite loop jika robo_run_now.php redirect ke sini
+    ob_start();
+    include_once __DIR__ . '/robo_run_now.php';
+    ob_end_clean();
+    // Setelah robot dijalankan, reload halaman dengan pesan
+    header('Location: portfolio.php?robo_run=ok&msg=Auto robot dijalankan.');
+    exit;
+}
+
 // --- Hitung total investasi (modal yang sudah diinvestasikan ke saham/posisi aktif) ---
 if (!isset($total_invested)) {
     $total_invested = 0;
@@ -201,8 +212,17 @@ $total_equity = $balance; // Saldo Cash
 foreach ($open as $o) {
     $total_equity += (isset($o['market_value']) ? (float)$o['market_value'] : ((float)$o['buy_price'] * (int)$o['lots'] * 100));
 }
-$floating_pl = $total_equity - $eq_capital;
+// Floating P/L (Open Trades) = total unrealized profit/loss semua posisi open (standar sekuritas)
+$floating_pl = 0;
+if (isset($open) && is_array($open)) {
+    foreach ($open as $o) {
+        $floating_pl += isset($o['floating_pl_rp']) ? $o['floating_pl_rp'] : 0;
+    }
+}
 $floating_pl_pct = $eq_capital > 0 ? ($floating_pl / $eq_capital) * 100 : 0;
+
+// Tambahkan deklarasi $total_pl_pct agar tidak error notice
+$total_pl_pct = $eq_capital > 0 ? ($total_pl / $eq_capital) * 100 : 0;
 
 // Kandidat rekomendasi yang belum dieksekusi robot
 $pending_reco = [];
@@ -486,7 +506,54 @@ setInterval(function() {
 }, 60000);
 </script>
 
-<div class="dashboard-cards" id="roboDashboard" style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:30px;">
+<style>
+.dashboard-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin-bottom: 30px;
+}
+.card-stat {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  border: 1px solid #e2e8f0;
+  padding: 18px 22px 16px 22px;
+  min-width: 220px;
+  flex: 1 1 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin: 0;
+}
+.card-stat h3 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  color: #0f172a;
+  font-weight: 600;
+}
+.card-stat .value {
+  font-size: 22px;
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+.card-stat .sub {
+  font-size: 13px;
+  color: #64748b;
+}
+.text-green { color: #16a34a; }
+.text-red { color: #dc2626; }
+.stat-row {
+  display: flex;
+  flex-direction: row;
+  gap: 32px;
+  width: 100%;
+  align-items: flex-start;
+}
+.stat-row .card-stat { min-width: 0; flex: 1 1 0; }
+</style>
+
+<div class="dashboard-cards" id="roboDashboard">
     <div class="card-stat">
         <h3>Modal Awal</h3>
         <div class="value">Rp <?= number_format($eq_capital, 0, ',', '.') ?></div>
@@ -507,13 +574,25 @@ setInterval(function() {
         <div class="value">Rp <?= number_format($total_equity, 0, ',', '.') ?></div>
         <div class="sub">Cash + Market Value</div>
     </div>
+</div>
+<div class="dashboard-cards stat-row" style="margin-bottom:30px;">
     <div class="card-stat">
-        <h3>Profit / Loss (All Time)</h3>
-        <div class="value <?= $floating_pl >= 0 ? 'text-green' : 'text-red' ?>">
-            <?= $floating_pl > 0 ? '+' : '' ?><?= number_format($floating_pl, 0, ',', '.') ?>
-        </div>
-        <div class="sub">Return: <b><?= round($floating_pl_pct, 2) ?>%</b> vs Modal Rp <?= number_format($eq_capital, 0, ',', '.') ?></div>
+      <h3>Profit / Loss (All Time)</h3>
+      <div class="value <?= $total_pl >= 0 ? 'text-green' : 'text-red' ?>">
+          <?= $total_pl > 0 ? '+' : '' ?><?= number_format($total_pl, 0, ',', '.') ?>
+      </div>
+      <div class="sub">Return (Closed): <b><?= round($total_pl_pct, 2) ?>%</b> vs Modal Rp <?= number_format($eq_capital, 0, ',', '.') ?></div>
     </div>
+    <div class="card-stat">
+      <h3>Floating P/L (Open Trades)</h3>
+      <div class="value <?= $floating_pl >= 0 ? 'text-green' : 'text-red' ?>">
+          <?= $floating_pl > 0 ? '+' : '' ?><?= number_format($floating_pl, 0, ',', '.') ?>
+      </div>
+      <div class="sub">Return (Floating): <?= number_format($floating_pl_pct, 2) ?>% dari modal berjalan</div>
+    </div>
+</div>
+
+<div class="dashboard-cards" style="margin-bottom:30px;">
     <div class="card-stat">
         <h3>Win Rate Accuracy</h3>
         <div class="value <?= $win_rate >= 60 ? 'text-green' : ($win_rate > 0 ? 'text-orange' : '') ?>"><?= $win_rate ?>%</div>
