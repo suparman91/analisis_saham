@@ -7,6 +7,7 @@ require_once __DIR__ . '/auth.php';
 require_login();
 
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/robo_runtime.php';
 
 header('Content-Type: application/json');
 
@@ -16,17 +17,8 @@ $mysqli = db_connect();
 
 // Create settings table if not exists
 function ensureSettingsTable($mysqli) {
-    $mysqli->query("CREATE TABLE IF NOT EXISTS robo_settings (
-        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL UNIQUE,
-        guard_price_threshold DECIMAL(5,2) DEFAULT 5.0,
-        semi_auto_mode INT DEFAULT 0,
-        manual_approval INT DEFAULT 0,
-        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_user (user_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    
+    robo_ensure_settings_table($mysqli);
+
     $mysqli->query("CREATE TABLE IF NOT EXISTS robo_whitelist_blacklist (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         user_id INT NOT NULL,
@@ -46,22 +38,7 @@ require_subscription($mysqli);
 try {
     if ($action === 'get_settings') {
         // Get user settings
-        $stmt = $mysqli->prepare("SELECT guard_price_threshold, semi_auto_mode, manual_approval FROM robo_settings WHERE user_id = ?");
-        $stmt->bind_param("i", $user_id);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        
-        if ($result->num_rows === 0) {
-            // Initialize default settings
-            $mysqli->query("INSERT INTO robo_settings (user_id, guard_price_threshold, semi_auto_mode, manual_approval) VALUES ({$user_id}, 5.0, 0, 0)");
-            $settings = [
-                'guard_price_threshold' => 5.0,
-                'semi_auto_mode' => 0,
-                'manual_approval' => 0
-            ];
-        } else {
-            $settings = $result->fetch_assoc();
-        }
+        $settings = robo_get_user_settings($mysqli, $user_id);
         
         // Get whitelist count
         $whitelist_count = $mysqli->query("SELECT COUNT(*) c FROM robo_whitelist_blacklist WHERE user_id={$user_id} AND list_type='WHITELIST'")->fetch_assoc()['c'];
@@ -116,6 +93,26 @@ try {
         echo json_encode([
             'status' => 'success',
             'message' => "Manual approval mode: " . ($enabled ? "ENABLED" : "DISABLED")
+        ]);
+
+    } elseif ($action === 'update_strategy_profile') {
+        $profile = strtolower(trim((string)($_POST['strategy_profile'] ?? 'balanced')));
+        $adaptive = isset($_POST['market_adaptive']) ? (int)$_POST['market_adaptive'] : 1;
+        $allowedProfiles = ['conservative', 'balanced', 'aggressive'];
+        if (!in_array($profile, $allowedProfiles, true)) {
+            throw new Exception("Strategy profile tidak valid");
+        }
+
+        $stmt = $mysqli->prepare("INSERT INTO robo_settings (user_id, strategy_profile, market_adaptive) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE strategy_profile = VALUES(strategy_profile), market_adaptive = VALUES(market_adaptive)");
+        $stmt->bind_param("isi", $user_id, $profile, $adaptive);
+        $stmt->execute();
+        $stmt->close();
+
+        echo json_encode([
+            'status' => 'success',
+            'message' => 'Profil strategi robo berhasil diperbarui.',
+            'strategy_profile' => $profile,
+            'market_adaptive' => $adaptive
         ]);
         
     } elseif ($action === 'add_whitelist') {

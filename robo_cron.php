@@ -2,24 +2,20 @@
 set_time_limit(0);
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/analyze.php';
+require_once __DIR__ . '/robo_runtime.php';
 require_once __DIR__ . '/telegram_crypto.php';
 
 date_default_timezone_set('Asia/Jakarta');
 
 $mysqli = db_connect();
 
-// Config Robot
-$TP_PCT = 0.05; // Take Profit 5%
-$SL_PCT = -0.03; // Stop Loss -3%
-$MAX_ALLOC = 10000000; // Max Rp 10 Juta per beli (per saham)
-$TARGET_POSITIONS = 5; // Bagi modal rata untuk target jumlah posisi
-$ALLIN_SCORE = 90; // Skor minimum untuk all-in (high conviction)
-
 // Fungsi Telegram Alert Robo
 function sendRoboAlert($mysqli, $msg) {
     try {
-        $bot_token = "8659586557:AAE8p2N49c81NwU9vh93TbQb92C8iJMcwU4"; // Token bawaan
-        // Jika token ada di db, replace di perbaikan selanjutnya kalau user mau dinamis
+        $bot_token = tg_bot_token();
+        if ($bot_token === '') {
+            return;
+        }
         
         $res = $mysqli->query("SELECT chat_id_encrypted FROM telegram_subscribers WHERE is_active=1");
         if(!$res || $res->num_rows === 0) return;
@@ -105,6 +101,19 @@ while ($users && ($u = $users->fetch_assoc())) {
 
     echo "-- User #{$uid} ({$u['email']}) --\n";
     $balance = (float)$u['robo_balance'];
+    $roboSettings = robo_get_user_settings($mysqli, $uid);
+    $marketContext = robo_get_market_context();
+    $runtimeConfig = robo_build_runtime_config($roboSettings, $marketContext);
+    $TP_PCT = (float)$runtimeConfig['tp_pct'];
+    $SL_PCT = (float)$runtimeConfig['sl_pct'];
+    $MAX_ALLOC = (int)$runtimeConfig['max_alloc'];
+    $TARGET_POSITIONS = (int)$runtimeConfig['target_positions'];
+    $ALLIN_SCORE = (int)$runtimeConfig['allin_score'];
+    $MAX_BUY_PER_RUN = (int)$runtimeConfig['max_buy_per_run'];
+    $MIN_ENTRY_SCORE = (int)$runtimeConfig['min_entry_score'];
+    $ALLOW_NEW_BUYS = !empty($runtimeConfig['allow_new_buys']);
+
+    echo "Runtime [U{$uid}] {$runtimeConfig['profile_label']} | {$marketContext['session']} | {$marketContext['sentiment_label']} | min score {$MIN_ENTRY_SCORE} | max buy {$MAX_BUY_PER_RUN}\n";
 
     // 1. CHECK OPEN POSITIONS (EXIT STRATEGY)
     $open = $mysqli->query("SELECT * FROM robo_trades WHERE status = 'OPEN' AND user_id = {$uid}");
@@ -161,6 +170,11 @@ while ($users && ($u = $users->fetch_assoc())) {
         continue;
     }
 
+    if (!$ALLOW_NEW_BUYS) {
+        echo "Monitor only [U{$uid}] - {$runtimeConfig['status_note']}\n";
+        continue;
+    }
+
     $open_count_res = $mysqli->query("SELECT COUNT(*) AS c FROM robo_trades WHERE status = 'OPEN' AND user_id = {$uid}");
     $open_count = (int)$open_count_res->fetch_assoc()['c'];
 
@@ -197,6 +211,11 @@ while ($users && ($u = $users->fetch_assoc())) {
         $sma5 = sma($closes, 5);
         $sma20 = sma($closes, 20);
         if (isset($sma5[$latestIdx], $sma20[$latestIdx], $sma5[$latestIdx - 1], $sma20[$latestIdx - 1])) {
+            $analysis = analyze_symbol($mysqli, $sym);
+            if (!isset($analysis['signal']) || !in_array((string)$analysis['signal'], ['BUY', 'STRONG BUY'], true)) {
+                continue;
+            }
+
             $avg_vol_5 = array_sum(array_slice($vols, -5)) / 5;
             if ($sma5[$latestIdx - 1] <= $sma20[$latestIdx - 1] && $sma5[$latestIdx] > $sma20[$latestIdx] && $vols[$latestIdx] > $avg_vol_5 * 1.5) {
                 $volRatio = $avg_vol_5 > 0 ? ($vols[$latestIdx] / $avg_vol_5) : 1;
@@ -210,7 +229,14 @@ while ($users && ($u = $users->fetch_assoc())) {
                 $score += min(25, max(0, ($volRatio - 1.5) * 20));
                 $score += min(10, max(0, $smaSpreadPct * 2));
                 $score += min(10, max(0, $ret5));
+                if ((string)$analysis['signal'] === 'STRONG BUY') {
+                    $score += 5;
+                }
                 $score = (int)max(0, min(99, round($score)));
+
+                if ($score < $MIN_ENTRY_SCORE) {
+                    continue;
+                }
 
                 $buy_candidates[] = [
                     'symbol' => $sym,
@@ -229,7 +255,7 @@ while ($users && ($u = $users->fetch_assoc())) {
 
     $b = 0;
     foreach ($buy_candidates as $cand) {
-        if ($balance < 1000000 || $b >= 2) {
+        if ($balance < 1000000 || $b >= $MAX_BUY_PER_RUN) {
             break;
         }
 
@@ -266,7 +292,21 @@ while ($users && ($u = $users->fetch_assoc())) {
         }
         $bought_val = $lots * 100 * $buyPrice;
 
-        $mysqli->query("INSERT INTO robo_trades (user_id, symbol, buy_price, buy_date, buy_reason, lots, status) VALUES ({$uid}, '{$symEsc}', {$buyPrice}, '{$buyDate}', '{$reasonEsc}', {$lots}, 'OPEN')");
+        $existingRes = $mysqli->query("SELECT id, buy_price, lots, buy_reason FROM robo_trades WHERE user_id={$uid} AND symbol='{$symEsc}' AND status='OPEN' LIMIT 1");
+        if ($existingRes && $existingRes->num_rows > 0) {
+            $ex = $existingRes->fetch_assoc();
+            $oldLots = (int)$ex['lots'];
+            $oldPrice = (float)$ex['buy_price'];
+            $newLots = $oldLots + $lots;
+            $newAvgPrice = (($oldPrice * $oldLots) + ($buyPrice * $lots)) / $newLots;
+            $prevReason = isset($ex['buy_reason']) ? (string)$ex['buy_reason'] : '';
+            $mergedReason = trim(($prevReason !== '' ? $prevReason . ' | ' : '') . 'ADD LOT @' . round($buyPrice, 2) . ' | ' . $reason);
+            $mergedReasonEsc = $mysqli->real_escape_string($mergedReason);
+            $tradeId = (int)$ex['id'];
+            $mysqli->query("UPDATE robo_trades SET buy_price={$newAvgPrice}, lots={$newLots}, buy_reason='{$mergedReasonEsc}' WHERE id={$tradeId} AND user_id={$uid}");
+        } else {
+            $mysqli->query("INSERT INTO robo_trades (user_id, symbol, buy_price, buy_date, buy_reason, lots, status) VALUES ({$uid}, '{$symEsc}', {$buyPrice}, '{$buyDate}', '{$reasonEsc}', {$lots}, 'OPEN')");
+        }
         $mysqli->query("UPDATE users SET robo_balance = robo_balance - {$bought_val} WHERE id = {$uid}");
 
         $balance -= $bought_val;

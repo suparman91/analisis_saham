@@ -25,16 +25,18 @@ $mysqli->query($stmt_create);
 
 // Handle Save / Add Akun Baru
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] == 'add') {
-    $name = $mysqli->real_escape_string($_POST['name']);
-    $chat_id = trim($_POST['chat_id']);
+    require_valid_csrf();
+    $name = trim((string)($_POST['name'] ?? ''));
+    $chat_id = trim((string)($_POST['chat_id'] ?? ''));
     
-    if ($chat_id !== '') {
+    if ($chat_id !== '' && $name !== '') {
         $encrypted = tg_encrypt($chat_id);
-    
-        $stmt = $mysqli->prepare("INSERT INTO telegram_subscribers (user_id, name, chat_id_encrypted) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE chat_id_encrypted = ?");
-        $stmt->bind_param('isss', $user_id, $name, $encrypted, $encrypted);
-        $stmt->execute();
-        $stmt->close();
+        if ($encrypted !== false) {
+            $stmt = $mysqli->prepare("INSERT INTO telegram_subscribers (user_id, name, chat_id_encrypted) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE chat_id_encrypted = ?");
+            $stmt->bind_param('isss', $user_id, $name, $encrypted, $encrypted);
+            $stmt->execute();
+            $stmt->close();
+        }
     }
     
     header("Location: telegram_setting.php?" . ($isEmbedded ? 'embed=1&' : '') . "msg=success_add");
@@ -42,8 +44,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 }
 
 // Handle Delete Data
-if (isset($_GET['del'])) {
-    $id = (int)$_GET['del'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete') {
+    require_valid_csrf();
+    $id = (int)($_POST['id'] ?? 0);
     $stmt = $mysqli->prepare("DELETE FROM telegram_subscribers WHERE id = ? AND user_id = ?");
     $stmt->bind_param('ii', $id, $user_id);
     $stmt->execute();
@@ -106,6 +109,7 @@ $pageTitle = 'Pengaturan Telegram - Analisis Saham';
 
       <div class="form-box">
           <form method="POST">
+              <input type="hidden" name="csrf_token" value="<?= security_escape(csrf_token()) ?>">
               <input type="hidden" name="action" value="add">
               <div class="form-group">
                   <label>Nama Pemilik (Alias)</label>
@@ -141,7 +145,12 @@ $pageTitle = 'Pengaturan Telegram - Analisis Saham';
                   <td><span class="badge-code"><?= $masked_view ?></span></td>
                   <td><span style="color:#10b981; font-weight:bold;">Aktif</span></td>
                   <td>
-                      <a href="telegram_setting.php?<?= $isEmbedded ? 'embed=1&' : '' ?>del=<?= $row['id'] ?>" class="btn-danger" onclick="return confirm('Yakin ingin menghapus <?php echo addslashes($row['name']); ?>?')">Del</a>
+                      <form method="POST" style="display:inline;">
+                          <input type="hidden" name="csrf_token" value="<?= security_escape(csrf_token()) ?>">
+                          <input type="hidden" name="action" value="delete">
+                          <input type="hidden" name="id" value="<?= (int)$row['id'] ?>">
+                          <button type="submit" class="btn-danger" onclick="return confirm('Yakin ingin menghapus <?php echo addslashes($row['name']); ?>?')">Del</button>
+                      </form>
                   </td>
               </tr>
               <?php endwhile; ?>

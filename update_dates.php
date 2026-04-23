@@ -1,1 +1,0 @@
-<?php require __DIR__ . "/db.php"; $m = db_connect(); $y = date("Y-m-d", strtotime("-1 day")); $t = date("Y-m-d"); $m->query("UPDATE robo_trades SET buy_date='$y' WHERE status='OPEN'"); $m->query("UPDATE robo_trades SET buy_date='$y', sell_date='$t' WHERE status='CLOSED'"); echo "OK"; ?>

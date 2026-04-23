@@ -2,28 +2,54 @@
 require_once 'db.php';
 require_once 'auth.php';
 $mysqli = db_connect();
-$error = ''; $success = '';
+$error = ''; $success = false;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name = $mysqli->real_escape_string(trim($_POST['name']));
-    $email = $mysqli->real_escape_string(trim($_POST['email']));
+  require_valid_csrf();
+
+  $name = trim((string)($_POST['name'] ?? ''));
+  $email = trim((string)($_POST['email'] ?? ''));
     $agreeDisclaimer = isset($_POST['agree_disclaimer']) && $_POST['agree_disclaimer'] === '1';
-    $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+  $plainPassword = (string)($_POST['password'] ?? '');
 
     if (!$agreeDisclaimer) {
         $error = 'Anda wajib menyetujui disclaimer sebelum membuat akun.';
+  } elseif ($name === '' || mb_strlen($name) > 100) {
+    $error = 'Nama wajib diisi dan maksimal 100 karakter.';
+  } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL) || mb_strlen($email) > 190) {
+    $error = 'Format email tidak valid.';
+  } elseif (strlen($plainPassword) < 8) {
+    $error = 'Password minimal 8 karakter.';
     } else {
-        // Cek duplikat
-        $res = $mysqli->query("SELECT id FROM users WHERE email = '$email'");
-        if ($res && $res->num_rows > 0) {
+    $password = password_hash($plainPassword, PASSWORD_DEFAULT);
+
+    $stmt = $mysqli->prepare("SELECT id FROM users WHERE email = ? LIMIT 1");
+    $existingUser = null;
+    if ($stmt) {
+      $stmt->bind_param('s', $email);
+      $stmt->execute();
+      $res = $stmt->get_result();
+      $existingUser = $res ? $res->fetch_assoc() : null;
+      $stmt->close();
+    }
+
+    if ($existingUser) {
             $error = 'Email ini sudah terdaftar!';
         } else {
-            // Daftar akun baru dengan trial 7 hari gratis
             $trial_end = date('Y-m-d', strtotime('+7 days'));
-            if ($mysqli->query("INSERT INTO users (name, email, password, subscription_end) VALUES ('$name', '$email', '$password', '$trial_end')")) {
-                $success = "Akun berhasil dibuat dengan trial 7 hari gratis! Silakan <a href='login.php' style='color:#16a34a; font-weight:bold; text-decoration:underline;'>Login di sini</a>.";
+      $insert = $mysqli->prepare("INSERT INTO users (name, email, password, subscription_end) VALUES (?, ?, ?, ?)");
+      if ($insert) {
+        $insert->bind_param('ssss', $name, $email, $password, $trial_end);
+        $saved = $insert->execute();
+        $insert->close();
+      } else {
+        $saved = false;
+      }
+
+      if ($saved) {
+        $success = true;
             } else {
-                $error = 'Gagal membuat akun: ' . $mysqli->error;
+        $error = 'Gagal membuat akun. Silakan coba lagi.';
             }
         }
     }
@@ -110,15 +136,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <div class="login-box">
     <h2>Daftar Akun Baru</h2>
     <p class="small-note">Mulai trial publik 7 hari untuk uji fitur platform.</p>
-    <?php if($error) echo "<p class='err'>$error</p>"; ?>
-    <?php if($success) echo "<p class='succ'>$success</p>"; else { ?>
+    <?php if($error) echo "<p class='err'>" . security_escape($error) . "</p>"; ?>
+    <?php if($success) { ?>
+    <p class='succ'>Akun berhasil dibuat dengan trial 7 hari gratis! Silakan <a href='login.php' style='color:#16a34a; font-weight:bold; text-decoration:underline;'>login di sini</a>.</p>
+    <?php } else { ?>
     <form method="POST">
+      <input type="hidden" name="csrf_token" value="<?= security_escape(csrf_token()) ?>">
       <label>Nama Lengkap:</label>
       <input type="text" name="name" required placeholder="Budi Santoso" autofocus>
       <label>Email:</label>
       <input type="email" name="email" required placeholder="email@anda.com">
       <label>Password:</label>
-      <input type="password" name="password" required placeholder="minimal 6 karakter" minlength="6">
+      <input type="password" name="password" required placeholder="minimal 8 karakter" minlength="8">
 
       <div class="disclaimer-box">
         Disclaimer: Web ini hanya untuk analisa dan edukasi pasar saham. Seluruh informasi, skor, sinyal, scanner, maupun simulasi di platform ini bukan ajakan jual beli efek, bukan anjuran harga, dan bukan nasihat investasi. Keputusan transaksi sepenuhnya menjadi tanggung jawab pengguna.

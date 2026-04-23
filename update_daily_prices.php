@@ -1,14 +1,168 @@
 <?php
 /**
- * CRON JOB: SCRIPT UPDATE HARGA SAHAM MASSAL
- * Jalankan file ini melalui CMD / Task Scheduler / Cron Job setiap jam 16:30 WIB (Setelah market tutup)
- * Perintah CMD (contoh): php D:\xampp\htdocs\analisis_saham\update_daily_prices.php
+ * update_daily_prices.php
+ * Dipanggil oleh ajax_update.php untuk fetch & simpan harga EOD hari ini.
+ * Menggunakan Yahoo Finance v8 chart endpoint, dengan fallback ke v7 spark.
+ * Proses saham secara batch kecil untuk hindari timeout/rate-limit.
  */
 
-require_once __DIR__ . '/db.php';
-$mysqli = db_connect();
+if (!defined('ABSPATH') && php_sapi_name() !== 'cli' && !isset($GLOBALS['_ajax_update_caller'])) {
+    // Boleh dipanggil via require dari ajax_update.php saja (atau CLI)
+    // Jika diakses langsung via browser (bukan embed), redirect ke index
+    if (!isset($_SERVER['HTTP_HOST'])) {
+        // CLI mode - ok
+    }
+}
+
+if (!isset($mysqli) || !($mysqli instanceof mysqli)) {
+    require_once __DIR__ . '/db.php';
+    $mysqli = db_connect();
+}
+
 date_default_timezone_set('Asia/Jakarta');
-set_time_limit(0);
+
+$today = date('Y-m-d');
+$batchSize = 50; // Ambil per batch agar tidak OOM
+$delayMs = 200;  // Delay antar batch (microseconds * 1000)
+$totalInserted = 0;
+$totalSkipped = 0;
+$totalFailed = 0;
+
+// Ambil semua simbol dari DB
+$allSymbols = [];
+$resSyms = $mysqli->query("SELECT symbol FROM stocks ORDER BY symbol ASC");
+if ($resSyms) {
+    while ($r = $resSyms->fetch_assoc()) {
+        if (!empty($r['symbol'])) {
+            $allSymbols[] = $r['symbol'];
+        }
+    }
+}
+
+if (empty($allSymbols)) {
+    echo "Tidak ada simbol di tabel stocks.\n";
+    return;
+}
+
+echo "Total simbol: " . count($allSymbols) . "\n";
+
+$upsertSql = "INSERT INTO prices (symbol, date, open, high, low, close, volume)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON DUPLICATE KEY UPDATE
+                open   = IF(open > 0, open, VALUES(open)),
+                high   = IF(VALUES(high) > high, VALUES(high), high),
+                low    = IF(VALUES(low) > 0 AND VALUES(low) < low, VALUES(low), low),
+                close  = VALUES(close),
+                volume = IF(VALUES(volume) > volume, VALUES(volume), volume)";
+$stmt = $mysqli->prepare($upsertSql);
+if (!$stmt) {
+    echo "Prepare gagal: " . $mysqli->error . "\n";
+    return;
+}
+
+/**
+ * Fetch satu simbol via Yahoo Finance v8 chart endpoint (1 hari terakhir, interval 1d).
+ * Return array ['open','high','low','close','volume'] atau false jika gagal.
+ */
+function udp_fetch_yahoo_eod(string $symbol) {
+    $sym = strtoupper($symbol);
+    if (strpos($sym, '.JK') === false) {
+        $sym .= '.JK';
+    }
+    $url = 'https://query1.finance.yahoo.com/v8/finance/chart/' . urlencode($sym)
+         . '?range=5d&interval=1d&includePrePost=false';
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 12);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json']);
+    $body = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if (!$body || $httpCode !== 200) {
+        return false;
+    }
+
+    $data = json_decode($body, true);
+    if (!isset($data['chart']['result'][0]['timestamp'])) {
+        return false;
+    }
+
+    $result    = $data['chart']['result'][0];
+    $timestamps = $result['timestamp'];
+    $quote     = $result['indicators']['quote'][0] ?? [];
+
+    // Ambil data paling baru (last entry)
+    $lastIdx = count($timestamps) - 1;
+    for ($i = $lastIdx; $i >= 0; $i--) {
+        $close = isset($quote['close'][$i]) ? (float)$quote['close'][$i] : 0.0;
+        if ($close <= 0) continue;
+
+        return [
+            'open'   => isset($quote['open'][$i])   ? (float)$quote['open'][$i]   : $close,
+            'high'   => isset($quote['high'][$i])   ? (float)$quote['high'][$i]   : $close,
+            'low'    => isset($quote['low'][$i])    ? (float)$quote['low'][$i]    : $close,
+            'close'  => $close,
+            'volume' => isset($quote['volume'][$i]) ? (int)$quote['volume'][$i]   : 0,
+            'date_ts'=> (int)$timestamps[$i],
+        ];
+    }
+    return false;
+}
+
+// Proses batch
+$batches = array_chunk($allSymbols, $batchSize);
+$batchNum = 0;
+foreach ($batches as $batch) {
+    $batchNum++;
+    echo "Batch {$batchNum}/" . count($batches) . " (" . count($batch) . " saham)... ";
+    $bInserted = 0;
+
+    foreach ($batch as $sym) {
+        $eod = udp_fetch_yahoo_eod($sym);
+        if (!$eod) {
+            $totalFailed++;
+            continue;
+        }
+
+        // Pastikan tanggal data sesuai hari ini atau kemarin (toleransi weekend)
+        $dataDate = date('Y-m-d', $eod['date_ts']);
+        // Ambil tanggal terakhir yang valid (max 3 hari ke belakang untuk toleransi libur/weekend)
+        $diffDays = (int)((strtotime($today) - strtotime($dataDate)) / 86400);
+        if ($diffDays > 3) {
+            $totalSkipped++;
+            continue;
+        }
+
+        $sym_db   = $sym;
+        $date_db  = $dataDate;
+        $open_db  = $eod['open'];
+        $high_db  = $eod['high'];
+        $low_db   = $eod['low'];
+        $close_db = $eod['close'];
+        $vol_db   = $eod['volume'];
+
+        $stmt->bind_param('ssddddd', $sym_db, $date_db, $open_db, $high_db, $low_db, $close_db, $vol_db);
+        if ($stmt->execute()) {
+            $totalInserted++;
+            $bInserted++;
+        } else {
+            $totalFailed++;
+        }
+    }
+
+    echo "Masuk: {$bInserted}\n";
+    // Jeda ringan antar batch agar tidak rate-limited
+    if ($batchNum < count($batches)) {
+        usleep($delayMs * 1000);
+    }
+}
+
+$stmt->close();
+
+echo "Selesai. Total berhasil: {$totalInserted} | Dilewati (terlalu lama): {$totalSkipped} | Gagal fetch: {$totalFailed}\n";
 
 echo "Mulai mengambil daftar emiten dari database...\n";
 $today = date('Y-m-d');

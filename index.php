@@ -686,6 +686,76 @@ $days_left = $subscription_end ? ceil((strtotime($subscription_end) - time()) / 
     .badge.hold { background:#6c757d; }
     .badge.notation-badge { background:#ffc107; color:#000; font-size:9px; padding:2px 4px; margin-left:4px; vertical-align:super; }
 
+        .market-meta {
+            display:flex;
+            align-items:flex-start;
+            gap:12px;
+            margin-bottom:12px;
+            flex-wrap:wrap;
+        }
+        .market-meta-card {
+            flex:1 1 320px;
+            min-width:260px;
+            background:#ffffff;
+            border:1px solid #e2e8f0;
+            border-radius:10px;
+            padding:12px 14px;
+            box-shadow:0 2px 4px rgba(15,23,42,0.05);
+        }
+        .market-meta-row {
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:12px;
+            flex-wrap:wrap;
+        }
+        .market-meta-info {
+            min-width:260px;
+            flex:1 1 420px;
+        }
+        .market-meta-card .meta-label { color:#475569; font-size:13px; }
+        .market-meta-card .meta-accent { color:#d97706; font-size:13px; }
+
+        #auto-update-banner {
+            display:none;
+            position:fixed;
+            left:50%;
+            bottom:20px;
+            transform:translateX(-50%);
+            width:min(680px, calc(100vw - 24px));
+            background:linear-gradient(135deg, #fff8cc 0%, #fde047 100%);
+            color:#1f2937;
+            padding:14px 16px;
+            border-radius:14px;
+            box-shadow:0 18px 42px rgba(15, 23, 42, 0.22);
+            font-weight:600;
+            z-index:9999;
+            border:1px solid #facc15;
+            line-height:1.45;
+            box-sizing:border-box;
+        }
+        #auto-update-banner.is-error {
+            background:linear-gradient(135deg, #fef2f2 0%, #fecaca 100%);
+            border-color:#f87171;
+            color:#7f1d1d;
+        }
+        #auto-update-banner.is-success {
+            background:linear-gradient(135deg, #ecfdf5 0%, #bbf7d0 100%);
+            border-color:#4ade80;
+            color:#166534;
+        }
+        #auto-update-banner.is-warn {
+            background:linear-gradient(135deg, #fff7ed 0%, #fed7aa 100%);
+            border-color:#fb923c;
+            color:#9a3412;
+        }
+        #update-text {
+            display:block;
+            white-space:normal;
+            word-break:break-word;
+            font-size:14px;
+        }
+
     .full-width { grid-column: 1 / -1; }
         .btn-force-update {
                 background: #0d6efd;
@@ -696,6 +766,7 @@ $days_left = $subscription_end ? ceil((strtotime($subscription_end) - time()) / 
                 font-weight: 700;
                 cursor: pointer;
                 font-size: 12px;
+            white-space: nowrap;
         }
         .btn-force-update:hover { background: #0b5ed7; }
         .sentiment-card { border: 1px solid #e2e8f0; background: linear-gradient(135deg, #ffffff, #f8fbff); }
@@ -731,7 +802,20 @@ $days_left = $subscription_end ? ceil((strtotime($subscription_end) - time()) / 
             .panel { padding: 12px; border-radius: 10px; }
             .panel h3 { font-size: 15px; }
             th, td { padding: 8px 6px; font-size: 12px; }
-            #auto-update-banner { left: 12px; right: 12px; bottom: 12px; }
+                        .market-meta { align-items:stretch; }
+                        .market-meta-card { min-width:0; }
+                        .market-meta-row { align-items:stretch; }
+                        .market-meta-info { min-width:0; }
+                        .btn-force-update { width:100%; white-space:normal; }
+                        #auto-update-banner {
+                            left:12px;
+                            right:12px;
+                            bottom:12px;
+                            width:auto;
+                            transform:none;
+                            padding:12px 14px;
+                            border-radius:12px;
+                        }
         }
     </style>
 </head>
@@ -754,13 +838,17 @@ $days_left = $subscription_end ? ceil((strtotime($subscription_end) - time()) / 
     <div style="background:#fff7ed; border:1px solid #fdba74; color:#7c2d12; padding:10px 12px; border-radius:8px; margin-bottom:12px; font-size:12px; line-height:1.5;">
         Mode public trial: seluruh data dan sinyal pada dashboard digunakan untuk analisa/edukasi, bukan ajakan jual beli, bukan anjuran harga, dan bukan nasihat investasi.
     </div>
-    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
-        <div class="subtitle" style="margin-bottom:0; line-height: 1.4;">
-            <strong>Data Referensi:</strong> <?= $today; ?> <br>
-            <strong>Update Terakhir:</strong> <?= $last_update_time ?> WIB <br>
-            <span style="color:#d97706; font-size:13px;">(Terkumpul saat ini: <?= $countTodayRaw ?> saham)</span>
+    <div class="market-meta">
+        <div class="subtitle market-meta-card" style="margin-bottom:0; line-height: 1.4;">
+            <div class="market-meta-row">
+                <div class="market-meta-info">
+                    <strong>Data Referensi:</strong> <?= $today; ?> <br>
+                    <strong>Update Terakhir:</strong> <span id="last-update-time"><?= $last_update_time ?></span> WIB <br>
+                    <span class="meta-accent">(Terkumpul saat ini: <span id="today-count"><?= $countTodayRaw ?></span> saham)</span>
+                </div>
+                <button id="btnForceUpdate" class="btn-force-update" type="button">Paksa Update EOD</button>
+            </div>
         </div>
-        <button id="btnForceUpdate" class="btn-force-update" type="button" style="margin-left:10px;">Paksa Update EOD</button>
     </div>
 
     <div class="grid">
@@ -991,32 +1079,54 @@ $days_left = $subscription_end ? ceil((strtotime($subscription_end) - time()) / 
 </div>
 
 <!-- Floating Banner Auto-Updater -->
-<div id="auto-update-banner" style="display:none; position:fixed; bottom:20px; right:20px; background-color:#ffd700; color:#000; padding:15px 25px; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.2); font-weight:bold; z-index:9999; border: 2px solid #e6c200;">
+<div id="auto-update-banner">
     <span id="update-text">⏳ Sedang mengUPDATE Harga EOD terbaru ke database (Otomatis). Mohon tunggu sebentar...</span>
 </div>
 
 <script>
-    function runForceUpdate() {
+    function setBannerState(kind, message) {
         const banner = document.getElementById('auto-update-banner');
         const text = document.getElementById('update-text');
+        if (!banner || !text) return;
+        banner.classList.remove('is-error', 'is-success', 'is-warn');
+        if (kind === 'error') banner.classList.add('is-error');
+        if (kind === 'success') banner.classList.add('is-success');
+        if (kind === 'warn') banner.classList.add('is-warn');
         banner.style.display = 'block';
-        text.innerText = '⏳ Menjalankan paksa update EOD...';
+        text.innerText = message;
+    }
+
+    function updateLastUpdateInfo(data) {
+        const lastUpdateEl = document.getElementById('last-update-time');
+        const todayCountEl = document.getElementById('today-count');
+        if (lastUpdateEl && data && data.updated_at_display) {
+            lastUpdateEl.textContent = data.updated_at_display;
+        }
+        if (todayCountEl && data && typeof data.today_count !== 'undefined') {
+            todayCountEl.textContent = data.today_count;
+        }
+    }
+
+    function runForceUpdate() {
+        const banner = document.getElementById('auto-update-banner');
+        setBannerState('', '⏳ Menjalankan paksa update EOD...');
 
         fetch('ajax_update.php?force=1')
             .then(res => res.json())
             .then(data => {
+                updateLastUpdateInfo(data);
                 if (data.is_fresh_today === true) {
-                    text.innerText = '✅ Paksa update berhasil. Data hari ini sudah fresh.';
+                    setBannerState('success', '✅ Paksa update berhasil. Data hari ini sudah fresh.');
                     localStorage.setItem('last_update_daily', new Date().toISOString().split('T')[0]);
                     setTimeout(() => { window.location.reload(); }, 1500);
                 } else {
-                    text.innerText = '⚠️ Paksa update selesai, tapi data hari ini belum lengkap (' + (data.today_count || 0) + ' saham).';
+                    setBannerState('warn', '⚠️ Paksa update selesai, tapi data hari ini belum lengkap (' + (data.today_count || 0) + ' saham).');
                     localStorage.removeItem('last_update_daily');
                     setTimeout(() => { banner.style.display = 'none'; }, 5000);
                 }
             })
             .catch(() => {
-                text.innerText = '⚠️ Paksa update gagal. Coba lagi beberapa menit lagi.';
+                setBannerState('error', '⚠️ Paksa update gagal. Coba lagi beberapa menit lagi.');
                 setTimeout(() => { banner.style.display = 'none'; }, 5000);
             });
     }
@@ -1037,26 +1147,27 @@ $days_left = $subscription_end ? ceil((strtotime($subscription_end) - time()) / 
         // Pengecekan Cache Lokal vs Tanggal Hari Ini. Jika belum update:
         if (shouldRunUpdate) {
             const banner = document.getElementById('auto-update-banner');
-            banner.style.display = 'block'; // Tampilkan Mode Update
+            setBannerState('', '⏳ Sedang mengUPDATE Harga EOD terbaru ke database (otomatis). Mohon tunggu sebentar.');
 
             fetch('ajax_update.php')
                 .then(res => res.json())
                 .then(data => {
+                    updateLastUpdateInfo(data);
                     if (data.is_fresh_today === true) {
-                        document.getElementById('update-text').innerText = "✅ Update EOD Berhasil! Harga hari ini sudah lengkap.";
+                        setBannerState('success', '✅ Update EOD berhasil. Harga hari ini sudah lengkap.');
                         // Set tanda bahwa hari ini sudah berhasil
                         localStorage.setItem('last_update_daily', today);
                         // Menghilangkan banner setelah 3 detik
                         setTimeout(() => { banner.style.display = 'none'; }, 3000);
                     } else {
                         // Data belum lengkap hari ini -> jangan lock localStorage agar bisa retry otomatis
-                        document.getElementById('update-text').innerText = "⏳ Data hari ini belum lengkap (" + (data.today_count || 0) + " saham). Sistem akan coba lagi saat refresh berikutnya.";
+                        setBannerState('warn', '⏳ Data hari ini belum lengkap (' + (data.today_count || 0) + ' saham). Sistem akan coba lagi saat refresh berikutnya.');
                         localStorage.removeItem('last_update_daily');
                         setTimeout(() => { banner.style.display = 'none'; }, 5000);
                     }
                 })
                 .catch(err => {
-                    document.getElementById('update-text').innerText = "⚠️ Gagal melakukan auto-update. Coba lagi nanti.";
+                    setBannerState('error', '⚠️ Gagal melakukan auto-update. Coba lagi nanti.');
                     localStorage.removeItem('last_update_daily');
                     setTimeout(() => { banner.style.display = 'none'; }, 5000);
                 });

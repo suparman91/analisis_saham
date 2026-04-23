@@ -26,6 +26,7 @@ $portfolioUrl = static function (string $path) use ($isEmbedded): string {
 
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/analyze.php';
+require_once __DIR__ . '/robo_runtime.php';
 
 date_default_timezone_set('Asia/Jakarta');
 
@@ -33,11 +34,6 @@ $mysqli = db_connect();
 require_subscription($mysqli);
 
 $user_id = get_user_id();
-$TP_PCT = 0.05;
-$SL_PCT = -0.03;
-$MAX_ALLOC = 10000000;
-$TARGET_POSITIONS = 5;
-$ALLIN_SCORE = 90;
 $actions = [];
 
 function getRealtimePriceYahoo($symbol) {
@@ -113,6 +109,18 @@ if (!$resUser || $resUser->num_rows === 0) {
 }
 $user = $resUser->fetch_assoc();
 $balance = (float)$user['robo_balance'];
+$roboSettings = robo_get_user_settings($mysqli, $user_id);
+$marketContext = robo_get_market_context();
+$runtimeConfig = robo_build_runtime_config($roboSettings, $marketContext);
+
+$TP_PCT = (float)$runtimeConfig['tp_pct'];
+$SL_PCT = (float)$runtimeConfig['sl_pct'];
+$MAX_ALLOC = (int)$runtimeConfig['max_alloc'];
+$TARGET_POSITIONS = (int)$runtimeConfig['target_positions'];
+$ALLIN_SCORE = (int)$runtimeConfig['allin_score'];
+$MAX_BUY_PER_RUN = (int)$runtimeConfig['max_buy_per_run'];
+$MIN_ENTRY_SCORE = (int)$runtimeConfig['min_entry_score'];
+$ALLOW_NEW_BUYS = !empty($runtimeConfig['allow_new_buys']);
 
 // 1. SELL check for open positions
 $open = $mysqli->query("SELECT * FROM robo_trades WHERE status='OPEN' AND user_id={$user_id}");
@@ -236,7 +244,7 @@ while ($open && ($t = $open->fetch_assoc())) {
 }
 
 // 2. BUY scan for current user
-if ($balance > 1000000) {
+if ($balance > 1000000 && $ALLOW_NEW_BUYS) {
     $openCountRes = $mysqli->query("SELECT COUNT(*) c FROM robo_trades WHERE status='OPEN' AND user_id={$user_id}");
     $openCount = $openCountRes ? (int)$openCountRes->fetch_assoc()['c'] : 0;
 
@@ -280,6 +288,11 @@ if ($balance > 1000000) {
                 continue;
             }
 
+            $analysis = analyze_symbol($mysqli, $sym);
+            if (!isset($analysis['signal']) || !in_array((string)$analysis['signal'], ['BUY', 'STRONG BUY'], true)) {
+                continue;
+            }
+
             $avgVol5 = array_sum(array_slice($vols, -5)) / 5;
             if ($sma5[$i - 1] <= $sma20[$i - 1] && $sma5[$i] > $sma20[$i] && $vols[$i] > $avgVol5 * 1.5) {
                 $volRatio = $avgVol5 > 0 ? ($vols[$i] / $avgVol5) : 1;
@@ -293,7 +306,14 @@ if ($balance > 1000000) {
                 $score += min(25, max(0, ($volRatio - 1.5) * 20));
                 $score += min(10, max(0, $smaSpreadPct * 2));
                 $score += min(10, max(0, $ret5));
+                if ((string)$analysis['signal'] === 'STRONG BUY') {
+                    $score += 5;
+                }
                 $score = (int)max(0, min(99, round($score)));
+
+                if ($score < $MIN_ENTRY_SCORE) {
+                    continue;
+                }
 
                 $buyCandidates[] = [
                     'symbol' => $sym,
@@ -310,7 +330,7 @@ if ($balance > 1000000) {
 
         $bought = 0;
         foreach ($buyCandidates as $cand) {
-            if ($balance < 1000000 || $bought >= 2) {
+            if ($balance < 1000000 || $bought >= $MAX_BUY_PER_RUN) {
                 break;
             }
 
@@ -352,7 +372,21 @@ if ($balance > 1000000) {
             $reason = $cand['reason'];
             $reasonEsc = $mysqli->real_escape_string($reason);
             $buyDate = date('Y-m-d');
-            $mysqli->query("INSERT INTO robo_trades (user_id, symbol, buy_price, buy_date, buy_reason, lots, status) VALUES ({$user_id}, '{$symEsc}', {$buyPrice}, '{$buyDate}', '{$reasonEsc}', {$lots}, 'OPEN')");
+            $existingRes = $mysqli->query("SELECT id, buy_price, lots, buy_reason FROM robo_trades WHERE user_id={$user_id} AND symbol='{$symEsc}' AND status='OPEN' LIMIT 1");
+            if ($existingRes && $existingRes->num_rows > 0) {
+                $ex = $existingRes->fetch_assoc();
+                $oldLots = (int)$ex['lots'];
+                $oldPrice = (float)$ex['buy_price'];
+                $newLots = $oldLots + $lots;
+                $newAvgPrice = (($oldPrice * $oldLots) + ($buyPrice * $lots)) / $newLots;
+                $prevReason = isset($ex['buy_reason']) ? (string)$ex['buy_reason'] : '';
+                $mergedReason = trim(($prevReason !== '' ? $prevReason . ' | ' : '') . 'ADD LOT @' . round($buyPrice, 2) . ' | ' . $reason);
+                $mergedReasonEsc = $mysqli->real_escape_string($mergedReason);
+                $tradeId = (int)$ex['id'];
+                $mysqli->query("UPDATE robo_trades SET buy_price={$newAvgPrice}, lots={$newLots}, buy_reason='{$mergedReasonEsc}' WHERE id={$tradeId} AND user_id={$user_id}");
+            } else {
+                $mysqli->query("INSERT INTO robo_trades (user_id, symbol, buy_price, buy_date, buy_reason, lots, status) VALUES ({$user_id}, '{$symEsc}', {$buyPrice}, '{$buyDate}', '{$reasonEsc}', {$lots}, 'OPEN')");
+            }
             $mysqli->query("UPDATE users SET robo_balance = robo_balance - {$buyValue} WHERE id = {$user_id}");
             $balance -= $buyValue;
             $actions[] = 'BUY ' . $cand['symbol'] . ' (' . $lots . ' lot, score ' . ($cand['score'] ?? 0) . ')';
@@ -372,6 +406,8 @@ if ($balance > 1000000) {
             $bought++;
         }
     }
+} elseif (!$ALLOW_NEW_BUYS) {
+    $actions[] = 'MONITOR ONLY (' . $runtimeConfig['status_note'] . ')';
 }
 
 if (count($actions) === 0) {

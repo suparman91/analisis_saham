@@ -5,6 +5,19 @@ require_once 'db.php';
 $mysqli = db_connect();
 $msg = '';
 
+$launchPromoActive = true;
+$packageCatalog = [
+    'basic-1m' => ['label' => '1 Bulan (Basic)', 'normal_price' => 100000, 'duration' => 1],
+    'pro-3m' => ['label' => '3 Bulan (Pro)', 'normal_price' => 237000, 'duration' => 3],
+    'advance-6m' => ['label' => '6 Bulan (Advance)', 'normal_price' => 474000, 'duration' => 6],
+    'ultimate-12m' => ['label' => '1 Tahun (Ultimate)', 'normal_price' => 948000, 'duration' => 12],
+];
+
+foreach ($packageCatalog as $packageKey => $packageData) {
+    $normalPrice = (int)$packageData['normal_price'];
+    $packageCatalog[$packageKey]['price'] = $launchPromoActive ? (int)floor($normalPrice * 0.5) : $normalPrice;
+}
+
 // Pastikan tabel payment_orders ada
 $mysqli->query("CREATE TABLE IF NOT EXISTS payment_orders (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -20,51 +33,97 @@ $mysqli->query("CREATE TABLE IF NOT EXISTS payment_orders (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    require_valid_csrf();
     $action = $_POST['action'];
 
     if ($action === 'request_manual') {
         $user_id = (int)$_POST['user_id'];
-        $package = $mysqli->real_escape_string(trim($_POST['package']));
-        $amount = (int)$_POST['amount'];
-        $duration = (int)$_POST['duration'];
+        $packageKey = (string)($_POST['package_key'] ?? '');
         $status = $_POST['status'] === 'paid' ? 'paid' : 'pending';
         $order_id = 'MANUAL-' . $user_id . '-' . time();
 
-        $mysqli->query("INSERT INTO payment_orders (user_id, order_id, package, amount, duration, status) VALUES ($user_id, '$order_id', '$package', $amount, $duration, '$status')");
+        if ($user_id <= 0 || !isset($packageCatalog[$packageKey])) {
+            $msg = 'User atau paket tidak valid.';
+        } else {
+            $package = $packageCatalog[$packageKey]['label'];
+            $amount = (int)$packageCatalog[$packageKey]['price'];
+            $duration = (int)$packageCatalog[$packageKey]['duration'];
 
-        if ($status === 'paid') {
-            $current = $mysqli->query("SELECT subscription_end FROM users WHERE id = $user_id")->fetch_assoc()['subscription_end'];
-            if ($current && strtotime($current) > time()) {
-                $new_end = date('Y-m-d', strtotime($current . " +$duration months"));
-            } else {
-                $new_end = date('Y-m-d', strtotime("+$duration months"));
+            $stmtInsert = $mysqli->prepare("INSERT INTO payment_orders (user_id, order_id, package, amount, duration, status) VALUES (?, ?, ?, ?, ?, ?)");
+            $stmtInsert->bind_param('issiis', $user_id, $order_id, $package, $amount, $duration, $status);
+            $stmtInsert->execute();
+            $stmtInsert->close();
+
+            if ($status === 'paid') {
+                $stmtCurrent = $mysqli->prepare("SELECT subscription_end FROM users WHERE id = ? LIMIT 1");
+                $stmtCurrent->bind_param('i', $user_id);
+                $stmtCurrent->execute();
+                $current = $stmtCurrent->get_result()->fetch_assoc()['subscription_end'] ?? null;
+                $stmtCurrent->close();
+
+                if ($current && strtotime($current) > time()) {
+                    $new_end = date('Y-m-d', strtotime($current . " +$duration months"));
+                } else {
+                    $new_end = date('Y-m-d', strtotime("+$duration months"));
+                }
+
+                $stmtUpdateUser = $mysqli->prepare("UPDATE users SET subscription_end = ? WHERE id = ?");
+                $stmtUpdateUser->bind_param('si', $new_end, $user_id);
+                $stmtUpdateUser->execute();
+                $stmtUpdateUser->close();
+
+                $stmtPaidAt = $mysqli->prepare("UPDATE payment_orders SET paid_at = NOW() WHERE order_id = ?");
+                $stmtPaidAt->bind_param('s', $order_id);
+                $stmtPaidAt->execute();
+                $stmtPaidAt->close();
             }
-            $mysqli->query("UPDATE users SET subscription_end = '$new_end' WHERE id = $user_id");
-            $mysqli->query("UPDATE payment_orders SET paid_at = NOW() WHERE order_id = '$order_id'");
-        }
 
-        $msg = 'Pengajuan manual berhasil dibuat.';
+            $msg = 'Pengajuan manual berhasil dibuat.';
+        }
     }
 
     if ($action === 'approve_manual') {
-        $order_id = $mysqli->real_escape_string($_POST['order_id']);
-        $order = $mysqli->query("SELECT * FROM payment_orders WHERE order_id = '$order_id' AND status = 'pending'")->fetch_assoc();
+        $order_id = (string)($_POST['order_id'] ?? '');
+        $stmtOrder = $mysqli->prepare("SELECT user_id, duration, status FROM payment_orders WHERE order_id = ? AND status = 'pending' LIMIT 1");
+        $stmtOrder->bind_param('s', $order_id);
+        $stmtOrder->execute();
+        $order = $stmtOrder->get_result()->fetch_assoc();
+        $stmtOrder->close();
+
         if ($order) {
-            $current = $mysqli->query("SELECT subscription_end FROM users WHERE id = {$order['user_id']}")->fetch_assoc()['subscription_end'];
+            $orderUserId = (int)$order['user_id'];
+            $orderDuration = (int)$order['duration'];
+            $stmtCurrent = $mysqli->prepare("SELECT subscription_end FROM users WHERE id = ? LIMIT 1");
+            $stmtCurrent->bind_param('i', $orderUserId);
+            $stmtCurrent->execute();
+            $current = $stmtCurrent->get_result()->fetch_assoc()['subscription_end'] ?? null;
+            $stmtCurrent->close();
+
             if ($current && strtotime($current) > time()) {
-                $new_end = date('Y-m-d', strtotime($current . " +{$order['duration']} months"));
+                $new_end = date('Y-m-d', strtotime($current . " +$orderDuration months"));
             } else {
-                $new_end = date('Y-m-d', strtotime("+{$order['duration']} months"));
+                $new_end = date('Y-m-d', strtotime("+$orderDuration months"));
             }
-            $mysqli->query("UPDATE users SET subscription_end = '$new_end' WHERE id = {$order['user_id']}");
-            $mysqli->query("UPDATE payment_orders SET status = 'paid', paid_at = NOW() WHERE order_id = '$order_id'");
+
+            $stmtUpdateUser = $mysqli->prepare("UPDATE users SET subscription_end = ? WHERE id = ?");
+            $stmtUpdateUser->bind_param('si', $new_end, $orderUserId);
+            $stmtUpdateUser->execute();
+            $stmtUpdateUser->close();
+
+            $stmtPaid = $mysqli->prepare("UPDATE payment_orders SET status = 'paid', paid_at = NOW() WHERE order_id = ?");
+            $stmtPaid->bind_param('s', $order_id);
+            $stmtPaid->execute();
+            $stmtPaid->close();
             $msg = 'Pengajuan manual disetujui dan langganan diaktifkan.';
         }
     }
 
     if ($action === 'fail_manual') {
-        $order_id = $mysqli->real_escape_string($_POST['order_id']);
-        $mysqli->query("UPDATE payment_orders SET status = 'failed' WHERE order_id = '$order_id'");
+        $order_id = (string)($_POST['order_id'] ?? '');
+        $stmtFailed = $mysqli->prepare("UPDATE payment_orders SET status = 'failed' WHERE order_id = ?");
+        $stmtFailed->bind_param('s', $order_id);
+        $stmtFailed->execute();
+        $stmtFailed->close();
         $msg = 'Pengajuan manual ditandai gagal.';
     }
 }
@@ -115,30 +174,33 @@ $pageTitle = 'Admin Manual Langganan | Analisis Saham';
 
     <h2>📝 Manual Langganan</h2>
     <p>Di halaman ini admin bisa mencatat pengajuan langganan manual, lalu menyetujui atau menolak setelah konfirmasi pembayaran WA.</p>
+    <div style="margin:16px 0 24px; background:#fff7ed; color:#9a3412; border:1px solid #fdba74; padding:12px 16px; border-radius:8px; font-weight:600;">
+        Promo launching aktif: semua paket memakai diskon 50% selama masa trial publik. Trial gratis user tetap 7 hari.
+    </div>
 
-    <?php if ($msg): ?><div class="msg"><?= htmlspecialchars($msg) ?></div><?php endif; ?>
+    <?php if ($msg): ?><div class="msg"><?= security_escape($msg) ?></div><?php endif; ?>
 
     <div class="panel">
         <h3>Tambah Pengajuan Manual</h3>
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="<?= security_escape(csrf_token()) ?>">
             <input type="hidden" name="action" value="request_manual">
             <label>User</label>
             <select name="user_id" required>
                 <option value="">Pilih user</option>
                 <?php foreach ($users as $u): ?>
-                    <option value="<?= $u['id'] ?>"><?= htmlspecialchars($u['name']) ?> (<?= htmlspecialchars($u['email']) ?>)</option>
+                    <option value="<?= (int)$u['id'] ?>"><?= security_escape($u['name']) ?> (<?= security_escape($u['email']) ?>)</option>
                 <?php endforeach; ?>
             </select>
             <label>Paket</label>
-            <input type="text" name="package" placeholder="Contoh: 3 Bulan (Pro)" required>
-            <label>Harga (Rp)</label>
-            <input type="number" name="amount" placeholder="79000" required>
-            <label>Durasi (bulan)</label>
-            <select name="duration" required>
-                <option value="1">1 Bulan</option>
-                <option value="3">3 Bulan</option>
-                <option value="6">6 Bulan</option>
-                <option value="12">12 Bulan</option>
+            <select name="package_key" required>
+                <option value="">Pilih paket</option>
+                <?php foreach ($packageCatalog as $packageKey => $package): ?>
+                    <option value="<?= security_escape($packageKey) ?>">
+                        <?= security_escape($package['label']) ?> - Rp <?= number_format($package['price'], 0, ',', '.') ?>
+                        (Normal Rp <?= number_format($package['normal_price'], 0, ',', '.') ?>)
+                    </option>
+                <?php endforeach; ?>
             </select>
             <label>Status</label>
             <select name="status" required>
@@ -169,23 +231,25 @@ $pageTitle = 'Admin Manual Langganan | Analisis Saham';
                 <?php foreach ($orders as $order): ?>
                 <tr>
                     <td><?= htmlspecialchars($order['order_id']) ?></td>
-                    <td><?= htmlspecialchars($order['user_name']) ?> (<?= htmlspecialchars($order['user_email']) ?>)</td>
-                    <td><?= htmlspecialchars($order['package']) ?></td>
+                    <td><?= security_escape($order['user_name']) ?> (<?= security_escape($order['user_email']) ?>)</td>
+                    <td><?= security_escape($order['package']) ?></td>
                     <td>Rp <?= number_format($order['amount'], 0, ',', '.') ?></td>
-                    <td><?= htmlspecialchars($order['duration']) ?> bulan</td>
-                    <td class="status-<?= htmlspecialchars($order['status']) ?>"><?= strtoupper($order['status']) ?></td>
+                    <td><?= (int)$order['duration'] ?> bulan</td>
+                    <td class="status-<?= security_escape($order['status']) ?>"><?= strtoupper(security_escape($order['status'])) ?></td>
                     <td><?= date('d M Y H:i', strtotime($order['created_at'])) ?></td>
                     <td><?= $order['paid_at'] ? date('d M Y H:i', strtotime($order['paid_at'])) : '-' ?></td>
                     <td>
                         <?php if ($order['status'] === 'pending'): ?>
                             <form method="POST" style="display:inline-block; margin-right:4px;">
+                                <input type="hidden" name="csrf_token" value="<?= security_escape(csrf_token()) ?>">
                                 <input type="hidden" name="action" value="approve_manual">
-                                <input type="hidden" name="order_id" value="<?= htmlspecialchars($order['order_id']) ?>">
+                                <input type="hidden" name="order_id" value="<?= security_escape($order['order_id']) ?>">
                                 <button type="submit" class="green">Approve</button>
                             </form>
                             <form method="POST" style="display:inline-block;">
+                                <input type="hidden" name="csrf_token" value="<?= security_escape(csrf_token()) ?>">
                                 <input type="hidden" name="action" value="fail_manual">
-                                <input type="hidden" name="order_id" value="<?= htmlspecialchars($order['order_id']) ?>">
+                                <input type="hidden" name="order_id" value="<?= security_escape($order['order_id']) ?>">
                                 <button type="submit" class="red">Tolak</button>
                             </form>
                         <?php else: ?>

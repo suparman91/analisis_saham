@@ -1,9 +1,42 @@
 <?php
-$tg_key = "ARAhunter2026!secret#"; // Kunci rahasia untuk enkripsi/dekripsi AES
+function tg_security_config() {
+    static $config = null;
+    if ($config !== null) {
+        return $config;
+    }
+
+    $config = [
+        'encryption_key' => getenv('APP_TG_ENCRYPTION_KEY') ?: '',
+        'bot_token' => getenv('TELEGRAM_BOT_TOKEN') ?: '',
+    ];
+
+    $localConfigFile = __DIR__ . '/security.local.php';
+    if (is_file($localConfigFile)) {
+        $localConfig = require $localConfigFile;
+        if (is_array($localConfig)) {
+            $config = array_merge($config, array_intersect_key($localConfig, $config));
+        }
+    }
+
+    return $config;
+}
+
+function tg_secret_key() {
+    $config = tg_security_config();
+    return (string)($config['encryption_key'] ?? '');
+}
+
+function tg_bot_token() {
+    $config = tg_security_config();
+    return trim((string)($config['bot_token'] ?? ''));
+}
 
 // Fungsi untuk Enkripsi Chat ID
 function tg_encrypt($data) {
-    global $tg_key;
+    $tg_key = tg_secret_key();
+    if ($tg_key === '') {
+        return false;
+    }
     $cipher = "aes-256-cbc";
     $ivlen = openssl_cipher_iv_length($cipher);
     $iv = openssl_random_pseudo_bytes($ivlen);
@@ -14,7 +47,10 @@ function tg_encrypt($data) {
 
 // Fungsi untuk Dekripsi Chat ID
 function tg_decrypt($data) {
-    global $tg_key;
+    $tg_key = tg_secret_key();
+    if ($tg_key === '') {
+        return false;
+    }
     $cipher = "aes-256-cbc";
     $decoded = base64_decode($data);
     if (strpos($decoded, '::') === false) return false;

@@ -47,20 +47,18 @@ function get_placeholder_count($mysqli, $date) {
 
 // Sebelum market close, jangan lock "already_updated" agar data real tetap bisa mengganti placeholder pre-open.
 if (!$forceUpdate && $isAfterClose && $todayCountBefore >= $minCompleteRows) {
-    if (file_exists($log_file)) {
-        $last = trim(file_get_contents($log_file));
-        if ($last !== $today) {
-            file_put_contents($log_file, $today);
-        }
-    } else {
+    if (!file_exists($log_file)) {
         file_put_contents($log_file, $today);
     }
+    touch($log_file);
     echo json_encode([
         'status' => 'already_updated',
         'today' => $today,
         'latest_date' => $latestBefore,
         'today_count' => $todayCountBefore,
-        'is_fresh_today' => true
+        'is_fresh_today' => true,
+        'updated_at' => date('Y-m-d H:i:s'),
+        'updated_at_display' => date('d M Y H:i')
     ]);
     exit;
 }
@@ -69,6 +67,7 @@ if (!$forceUpdate && $isAfterClose && $todayCountBefore >= $minCompleteRows) {
 // Ini penting agar update bisa mengejar target baris harian (tidak macet di status pending).
 
 ob_start();
+$GLOBALS['_ajax_update_caller'] = true;
 require __DIR__ . '/update_daily_prices.php';
 $output = ob_get_clean();
 
@@ -102,6 +101,8 @@ if ($isPreOpen && $todayCountAfter >= $minCompleteRows && $latestAfter === $toda
         'placeholder_count' => $placeholderCountAfter,
         'session' => $isPreOpen ? 'pre_open' : ($isAfterClose ? 'after_close' : 'intraday'),
         'forced' => $forceUpdate,
+        'updated_at' => date('Y-m-d H:i:s'),
+        'updated_at_display' => date('d M Y H:i'),
         'log' => $output
     ]);
 } else {
@@ -115,6 +116,8 @@ if ($isPreOpen && $todayCountAfter >= $minCompleteRows && $latestAfter === $toda
         'placeholder_count' => $placeholderCountAfter,
         'session' => $isPreOpen ? 'pre_open' : ($isAfterClose ? 'after_close' : 'intraday'),
         'forced' => $forceUpdate,
+        'updated_at' => file_exists($log_file) ? date('Y-m-d H:i:s', filemtime($log_file)) : null,
+        'updated_at_display' => file_exists($log_file) ? date('d M Y H:i', filemtime($log_file)) : 'Belum Pernah',
         'message' => 'Update dijalankan, tetapi data EOD hari ini belum lengkap.',
         'log' => $output
     ]);

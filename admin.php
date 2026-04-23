@@ -7,36 +7,52 @@ $mysqli = db_connect();
 $msg = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    require_valid_csrf();
     $uid = (int)$_POST['user_id'];
     
     if ($_POST['action'] === 'perpanjang') {
         $bulan = (int)$_POST['bulan'];
         if ($bulan > 0) {
-            // Cek sisa langganan
-            $res = $mysqli->query("SELECT subscription_end FROM users WHERE id = $uid");
-            $curr = $res->fetch_assoc()['subscription_end'];
+            $stmtCurrent = $mysqli->prepare("SELECT subscription_end FROM users WHERE id = ? LIMIT 1");
+            $stmtCurrent->bind_param('i', $uid);
+            $stmtCurrent->execute();
+            $curr = $stmtCurrent->get_result()->fetch_assoc()['subscription_end'] ?? null;
+            $stmtCurrent->close();
             
             $now = time();
             if ($curr && strtotime($curr) > $now) {
-                // Tambah dari sisa
                 $new_date = date('Y-m-d', strtotime($curr . " +$bulan months"));
             } else {
-                // Tambah dari hari ini
                 $new_date = date('Y-m-d', strtotime("+$bulan months"));
             }
             
-            $mysqli->query("UPDATE users SET subscription_end = '$new_date' WHERE id = $uid");
+            $stmtUpdate = $mysqli->prepare("UPDATE users SET subscription_end = ? WHERE id = ?");
+            $stmtUpdate->bind_param('si', $new_date, $uid);
+            $stmtUpdate->execute();
+            $stmtUpdate->close();
             $msg = "Berhasil menambah $bulan bulan untuk user ID $uid.";
         }
     } elseif ($_POST['action'] === 'cabut') {
-        $mysqli->query("UPDATE users SET subscription_end = NULL WHERE id = $uid AND role != 'admin'");
+        $stmtRevoke = $mysqli->prepare("UPDATE users SET subscription_end = NULL WHERE id = ? AND role != 'admin'");
+        $stmtRevoke->bind_param('i', $uid);
+        $stmtRevoke->execute();
+        $stmtRevoke->close();
         $msg = "Akses (Subscription) user ID $uid berhasil dicabut.";
     } elseif ($_POST['action'] === 'hapus') {
-        // Hapus child data
-        $mysqli->query("DELETE FROM portfolio WHERE user_id = $uid");
-        $mysqli->query("DELETE FROM robo_trades WHERE user_id = $uid");
-        // Hapus user
-        $mysqli->query("DELETE FROM users WHERE id = $uid AND role != 'admin'");
+        $stmtDeletePortfolio = $mysqli->prepare("DELETE FROM portfolio WHERE user_id = ?");
+        $stmtDeletePortfolio->bind_param('i', $uid);
+        $stmtDeletePortfolio->execute();
+        $stmtDeletePortfolio->close();
+
+        $stmtDeleteTrades = $mysqli->prepare("DELETE FROM robo_trades WHERE user_id = ?");
+        $stmtDeleteTrades->bind_param('i', $uid);
+        $stmtDeleteTrades->execute();
+        $stmtDeleteTrades->close();
+
+        $stmtDeleteUser = $mysqli->prepare("DELETE FROM users WHERE id = ? AND role != 'admin'");
+        $stmtDeleteUser->bind_param('i', $uid);
+        $stmtDeleteUser->execute();
+        $stmtDeleteUser->close();
         $msg = "Akun user ID $uid beserta datanya berhasil dihapus.";
     }
 }
@@ -77,7 +93,7 @@ $pageTitle = 'Admin Dashboard | User Manager';
         <strong>Proses Manual via WA:</strong> Gunakan tombol <span style="font-weight:bold; color:#16a34a;">ACC / Aktifkan</span> untuk memberi akses langganan setelah user konfirmasi pembayaran melalui WhatsApp. Jika ingin cabut akses, gunakan tombol <span style="font-weight:bold; color:#b45309;">Cabut Akses</span>.
     </div>
 
-    <?php if($msg) echo "<div style='background:#dcfce7; color:#166534; padding:10px; margin:20px 0; border-radius:5px;'>$msg</div>"; ?>
+    <?php if($msg) echo "<div style='background:#dcfce7; color:#166534; padding:10px; margin:20px 0; border-radius:5px;'>" . security_escape($msg) . "</div>"; ?>
 
     <table>
         <thead>
@@ -115,6 +131,7 @@ $pageTitle = 'Admin Dashboard | User Manager';
                 <td>
                     <?php if (!$is_admin): ?>
                     <form method="POST" style="display:inline-block; margin-bottom:5px;">
+                        <input type="hidden" name="csrf_token" value="<?= security_escape(csrf_token()) ?>">
                         <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
                         <input type="hidden" name="action" value="perpanjang">
                         <select name="bulan" style="padding:5px;">
@@ -127,12 +144,14 @@ $pageTitle = 'Admin Dashboard | User Manager';
                     </form><br>
                     
                     <form method="POST" style="display:inline-block;">
+                        <input type="hidden" name="csrf_token" value="<?= security_escape(csrf_token()) ?>">
                         <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
                         <input type="hidden" name="action" value="cabut">
                         <button type="submit" class="btn btn-yellow" onclick="return confirm('Cabut masa aktif user ini?')">Cabut Akses</button>
                     </form>
                     
                     <form method="POST" style="display:inline-block;">
+                        <input type="hidden" name="csrf_token" value="<?= security_escape(csrf_token()) ?>">
                         <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
                         <input type="hidden" name="action" value="hapus">
                         <button type="submit" class="btn btn-red" onclick="return confirm('Hapus user beserta portofolionya? Permanen lho.')">Del Akun</button>

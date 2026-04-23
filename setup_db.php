@@ -1,1 +1,0 @@
-<?php require 'db.php'; $db = db_connect(); $db->query('CREATE TABLE IF NOT EXISTS scan_history (id INT AUTO_INCREMENT PRIMARY KEY, scan_type VARCHAR(10), symbol VARCHAR(20), price DECIMAL(12,2), scan_date DATE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY unique_scan (scan_type, symbol, scan_date))'); echo $db->error; echo 'DB Ready';

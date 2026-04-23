@@ -1,1 +1,0 @@
-<?php require "db.php"; $db = db_connect(); $db->query("CREATE TABLE IF NOT EXISTS watchlist (id INT AUTO_INCREMENT PRIMARY KEY, symbol VARCHAR(32) NOT NULL UNIQUE, added_at DATETIME DEFAULT CURRENT_TIMESTAMP)"); if($db->error) echo "Error: " . $db->error; else echo "Table watchlist created successfully."; ?>

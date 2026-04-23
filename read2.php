@@ -1,1 +1,0 @@
-<?php $_GET["symbols"]="WMUU"; error_reporting(0); ob_start(); require "fetch_realtime.php"; $out = ob_get_clean(); $j = json_decode($out, true); unset($j["data"]["WMUU"]["debug"]); echo json_encode($j["data"]["WMUU"], JSON_PRETTY_PRINT); ?>

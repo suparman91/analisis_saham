@@ -12,12 +12,45 @@ $portfolioUrl = static function (string $path) use ($isEmbedded): string {
 
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/analyze.php';
+require_once __DIR__ . '/robo_runtime.php';
 $mysqli = db_connect();
 require_subscription($mysqli); // Wajib langganan aktif
 
 $user_id = get_user_id();
+$roboSettings = robo_get_user_settings($mysqli, $user_id);
+$marketContext = robo_get_market_context();
+$runtimeConfig = robo_build_runtime_config($roboSettings, $marketContext);
 $robo_run_msg = '';
 $saldo_msg = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_valid_csrf();
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['strategy_profile'])) {
+    $profile = strtolower(trim((string)$_POST['strategy_profile']));
+    $marketAdaptive = isset($_POST['market_adaptive']) ? 1 : 0;
+    $allowedProfiles = ['conservative', 'balanced', 'aggressive'];
+
+    if (!in_array($profile, $allowedProfiles, true)) {
+        header("Location: " . $portfolioUrl("portfolio.php?saldo_action=err&msg=" . urlencode("Profil strategi robo tidak valid.")));
+        exit;
+    }
+
+    $stmt = $mysqli->prepare("INSERT INTO robo_settings (user_id, strategy_profile, market_adaptive) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE strategy_profile = VALUES(strategy_profile), market_adaptive = VALUES(market_adaptive)");
+    $stmt->bind_param("isi", $user_id, $profile, $marketAdaptive);
+    $ok = $stmt->execute();
+    $stmt->close();
+
+    if ($ok) {
+        header("Location: " . $portfolioUrl("portfolio.php?saldo_action=ok&msg=" . urlencode("Mode robo diperbarui ke " . ucfirst($profile) . ($marketAdaptive ? " dengan adaptasi pasar aktif." : " tanpa adaptasi pasar."))));
+        exit;
+    }
+
+    header("Location: " . $portfolioUrl("portfolio.php?saldo_action=err&msg=" . urlencode("Perubahan mode robo gagal disimpan.")));
+    exit;
+}
+
 if (isset($_GET['robo_run'])) {
     if ($_GET['robo_run'] === 'ok') {
         $robo_run_msg = isset($_GET['msg']) ? $_GET['msg'] : 'Robo berhasil dijalankan.';
@@ -109,8 +142,9 @@ if (!isset($total_invested)) {
 }
 
 // Portfolio Open (User spesifik)
+// Gabungkan posisi per simbol agar tampilan menyerupai akun sekuritas (lot ditotal, harga jadi rata-rata tertimbang).
 $open = [];
-$res_open = $mysqli->query("SELECT * FROM robo_trades WHERE status='OPEN' AND user_id = $user_id ORDER BY buy_date DESC");
+$res_open = $mysqli->query("SELECT symbol, MIN(buy_date) AS buy_date, SUM(lots) AS lots, (SUM(buy_price * lots) / NULLIF(SUM(lots), 0)) AS buy_price, GROUP_CONCAT(buy_reason SEPARATOR ' | ') AS buy_reason FROM robo_trades WHERE status='OPEN' AND user_id = $user_id GROUP BY symbol ORDER BY buy_date DESC");
 if ($res_open) { while ($r = $res_open->fetch_assoc()) $open[] = $r; }
 
 // Ambil harga terbaru untuk setiap posisi OPEN lalu hitung floating P/L
@@ -383,9 +417,11 @@ $pending_reco = [];
 $MAX_OPEN_POSITIONS = 10;
 $MAX_BUY_PER_RUN = 2;
 $MIN_CASH_TO_BUY = 1000000;
-$TARGET_POSITIONS = 5;
-$MAX_ALLOC = 10000000;
-$ALLIN_SCORE = 90;
+$TARGET_POSITIONS = (int)$runtimeConfig['target_positions'];
+$MAX_ALLOC = (int)$runtimeConfig['max_alloc'];
+$ALLIN_SCORE = (int)$runtimeConfig['allin_score'];
+$MIN_ENTRY_SCORE = (int)$runtimeConfig['min_entry_score'];
+$ALLOW_NEW_BUYS = !empty($runtimeConfig['allow_new_buys']);
 
 $open_count = count($open);
 $open_symbols = [];
@@ -433,10 +469,29 @@ foreach ($symbols as $sym) {
         continue;
     }
 
-    $avgVol5 = array_sum(array_slice($vols, -5)) / 5;
-    if (!($sma5[$i - 1] <= $sma20[$i - 1] && $sma5[$i] > $sma20[$i] && $vols[$i] > $avgVol5 * 1.5)) {
+    // Cek SMA5 masih di atas SMA20 (sinyal aktif saat ini)
+    if (!($sma5[$i] > $sma20[$i])) {
         continue;
     }
+    // Cari hari Golden Cross dalam 3 hari terakhir
+    $crossDay = -1;
+    for ($d = 0; $d <= 2; $d++) {
+        $prevIdx = $i - $d - 1;
+        if ($prevIdx >= 0 && isset($sma5[$prevIdx], $sma20[$prevIdx]) && $sma5[$prevIdx] <= $sma20[$prevIdx]) {
+            $crossDay = $i - $d;
+            break;
+        }
+    }
+    if ($crossDay < 0) {
+        continue; // Tidak ada Golden Cross dalam 3 hari terakhir
+    }
+    // Cek volume breakout pada hari crossover
+    $avgVol5ForCross = $crossDay >= 5 ? array_sum(array_slice($vols, $crossDay - 5, 5)) / 5 : 0;
+    if ($avgVol5ForCross > 0 && !($vols[$crossDay] > $avgVol5ForCross * 1.5)) {
+        continue; // Volume breakout tidak terpenuhi saat crossover
+    }
+    $crossDaysAgo = $i - $crossDay;
+    $avgVol5 = array_sum(array_slice($vols, -5)) / 5;
 
     $volRatio = $avgVol5 > 0 ? ($vols[$i] / $avgVol5) : 1;
     $smaSpreadPct = $sma20[$i] > 0 ? (($sma5[$i] - $sma20[$i]) / $sma20[$i]) * 100 : 0;
@@ -449,7 +504,14 @@ foreach ($symbols as $sym) {
     $score += min(25, max(0, ($volRatio - 1.5) * 20));
     $score += min(10, max(0, $smaSpreadPct * 2));
     $score += min(10, max(0, $ret5));
+    if ((string)$analysis['signal'] === 'STRONG BUY') {
+        $score += 5;
+    }
     $score = (int)max(0, min(99, round($score)));
+
+    if ($score < $MIN_ENTRY_SCORE) {
+        continue;
+    }
 
     $pending_reco[] = [
         'symbol' => $sym,
@@ -457,6 +519,7 @@ foreach ($symbols as $sym) {
         'score' => $score,
         'vol_ratio' => round($volRatio, 2),
         'sma_spread' => round($smaSpreadPct, 2),
+        'cross_days_ago' => $crossDaysAgo,
     ];
 }
 
@@ -481,7 +544,9 @@ foreach ($pending_reco as &$cand) {
     $cand['lots'] = max(1, $lot); // Minimal 1 lot jika memungkinkan
     // Status logic
     $status = '-';
-    if ($balance < 1000000) {
+    if (!$ALLOW_NEW_BUYS) {
+        $status = 'MONITOR ONLY';
+    } elseif ($balance < 1000000) {
         $status = 'SALDO TIDAK CUKUP';
     } elseif ($open_count >= $MAX_OPEN_POSITIONS) {
         $status = 'ANTRIAN';
@@ -524,7 +589,9 @@ foreach ($pending_reco as &$cand) {
         }
     }
     // 3. Alasan status prioritas
-    if ($cand['status'] === 'ANTRIAN') {
+    if ($cand['status'] === 'MONITOR ONLY') {
+        $other_reasons[] = 'Belum masuk: robo sedang monitor-only karena sesi pasar atau sentimen saat ini.';
+    } elseif ($cand['status'] === 'ANTRIAN') {
         $other_reasons[] = 'Belum masuk: slot posisi penuh, menunggu slot kosong.';
     } elseif ($cand['status'] === 'SALDO TIDAK CUKUP') {
         $other_reasons[] = 'Belum masuk: saldo tidak cukup untuk beli lot minimal.';
@@ -581,7 +648,16 @@ $pageTitle = 'Robo-Trader Simulator | Analisis Saham';
     .card-stat .sub { font-size: 13px; color: #94a3b8; }
     
     .tbl-container { background: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; overflow: hidden; margin-bottom: 30px; }
-    .tbl-header { padding: 15px 20px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-weight: bold; color: #1e293b; display: flex; justify-content: space-between; }
+        .tbl-header { padding: 15px 20px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-weight: bold; color: #1e293b; display: flex; justify-content: space-between; }
+        .open-trades-header { flex-wrap: wrap; gap: 10px; align-items: center; }
+        .open-trades-actions { display:flex; flex-direction:column; gap:4px; align-items:flex-end; margin-left:auto; }
+        .btn-refresh-live { padding:6px 14px; background:#0ea5e9; color:#fff; border:none; border-radius:5px; cursor:pointer; font-size:13px; font-weight:bold; max-width:100%; white-space:nowrap; }
+        .live-status { font-size:11px; color:#64748b; text-align:right; }
+        @media (max-width: 900px) {
+            .open-trades-actions { width:100%; align-items:flex-start; margin-left:0; }
+            .btn-refresh-live { width:100%; white-space:normal; }
+            .live-status { text-align:left; }
+        }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 12px 20px; text-align: left; border-bottom: 1px solid #f1f5f9; font-size: 14px; }
     th { background: #f8fafc; color: #64748b; font-size: 13px; text-transform: uppercase; }
@@ -599,12 +675,91 @@ $pageTitle = 'Robo-Trader Simulator | Analisis Saham';
     .text-red { color: #991b1b; font-weight: bold; }
   </style>
 
+<style>
+.robo-loading-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.28);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+.robo-loading-overlay.active {
+    display: flex;
+}
+.robo-loading-box {
+    background: #ffffff;
+    border: 1px solid #dbeafe;
+    border-radius: 10px;
+    padding: 14px 18px;
+    min-width: 280px;
+    box-shadow: 0 8px 25px rgba(15, 23, 42, 0.2);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #1e3a8a;
+    font-size: 13px;
+    font-weight: 600;
+}
+.robo-loading-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid #bfdbfe;
+    border-top-color: #2563eb;
+    border-radius: 50%;
+    animation: roboSpin 0.8s linear infinite;
+}
+@keyframes roboSpin {
+    to { transform: rotate(360deg); }
+}
+</style>
+
+<div id="roboLoadingOverlay" class="robo-loading-overlay" aria-hidden="true">
+    <div class="robo-loading-box">
+        <div class="robo-loading-spinner"></div>
+        <div id="roboLoadingText">Robo AI sedang memproses data...</div>
+    </div>
+</div>
+
 <div style="margin-bottom: 25px;">
     <h2 style="margin:0; color:#0f172a;">&#x1F916; AI Robo-Trader Simulator</h2>
     <span style="color:#64748b; font-size:14px; display:block; margin-top:5px;">
       Simulasi Systematic Auto-Trading (Paper Trading) secara otomatis memonitor sinyal <b>Golden Cross</b> dengan <b>Ledakan Volume</b>, membeli dan menjual saham tanpa intervensi manusia berdasarkan batasan rasio risiko bawaan (-3% SL, +5% TP).
     </span>
 </div>
+
+<div style="margin-bottom:20px; background:#eff6ff; border:1px solid #bfdbfe; color:#1e3a8a; padding:14px 16px; border-radius:8px; font-size:13px; line-height:1.6;">
+        <b>Mode Robo Aktif:</b> <?= security_escape($runtimeConfig['profile_label']) ?>
+        | <b>Sesi Pasar:</b> <?= security_escape($marketContext['session']) ?>
+        | <b>Sentimen:</b> <?= security_escape($marketContext['sentiment_label']) ?> (score <?= (int)$marketContext['sentiment_score'] ?>)
+        | <b>Entry Minimum:</b> Score <?= (int)$runtimeConfig['min_entry_score'] ?>/99
+        | <b>Maks Buy per Run:</b> <?= (int)$runtimeConfig['max_buy_per_run'] ?>
+        <br>
+        <?= security_escape($runtimeConfig['status_note']) ?>
+</div>
+
+    <div style="margin-bottom:20px; background:#fff; padding:18px 20px; border-radius:8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
+        <form method="POST" style="display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap;">
+            <input type="hidden" name="csrf_token" value="<?= security_escape(csrf_token()) ?>">
+            <div>
+                <label for="strategyProfile" style="display:block; font-size:13px; font-weight:600; color:#0f172a; margin-bottom:6px;">Profil strategi</label>
+                <select id="strategyProfile" name="strategy_profile" style="padding:10px 12px; border:1px solid #cbd5e1; border-radius:6px; min-width:210px; background:#fff;">
+                    <option value="conservative" <?= $roboSettings['strategy_profile'] === 'conservative' ? 'selected' : '' ?>>Conservative</option>
+                    <option value="balanced" <?= $roboSettings['strategy_profile'] === 'balanced' ? 'selected' : '' ?>>Balanced</option>
+                    <option value="aggressive" <?= $roboSettings['strategy_profile'] === 'aggressive' ? 'selected' : '' ?>>Aggressive</option>
+                </select>
+            </div>
+            <label style="display:flex; align-items:center; gap:8px; padding:10px 12px; border:1px solid #dbeafe; background:#f8fbff; border-radius:6px; color:#1e3a8a; font-size:13px;">
+                <input type="checkbox" name="market_adaptive" value="1" <?= !empty($roboSettings['market_adaptive']) ? 'checked' : '' ?>>
+                Adaptif terhadap sentimen dan sesi pasar
+            </label>
+            <button type="submit" style="padding:10px 16px; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:bold; white-space:nowrap;">Simpan Mode Robo</button>
+            <div style="font-size:12px; color:#64748b; max-width:520px; line-height:1.5;">
+                Conservative lebih selektif, Balanced default, Aggressive lebih cepat masuk. Saat adaptif aktif, robo bisa menahan entry baru ketika sentimen atau sesi pasar tidak mendukung.
+            </div>
+        </form>
+    </div>
 
 <div style="margin-bottom:20px; background:#fff; padding:20px; border-radius:8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:15px;">
   <div>
@@ -614,14 +769,16 @@ $pageTitle = 'Robo-Trader Simulator | Analisis Saham';
   </div>
     <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
         <form id="formTopup" method="POST" style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
+            <input type="hidden" name="csrf_token" value="<?= security_escape(csrf_token()) ?>">
             <input type="number" name="tambah_saldo" min="100000" step="100000" placeholder="Top-up saldo (Rp)" style="padding:10px; border:1px solid #cbd5e1; border-radius:5px; font-weight:bold; min-width:200px;">
             <button type="submit" style="padding:10px 16px; background:#16a34a; color:white; border:none; border-radius:5px; cursor:pointer; font-weight:bold; white-space:nowrap;">Tambah Saldo</button>
         </form>
 
         <form id="formModal" method="POST" style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
+    <input type="hidden" name="csrf_token" value="<?= security_escape(csrf_token()) ?>">
     <input type="number" name="modal_awal" min="1000000" step="100000" value="<?= $eq_capital ?>" style="padding:10px; border:1px solid #cbd5e1; border-radius:5px; font-weight:bold; min-width:200px;">
     <button type="submit" onclick="return confirm('Apakah Anda yakin? Mengubah modal akan MENGHAPUS SEMUA DATA simulasi (history & portofolio) untuk akun ini dan memulai dari awal.')" style="padding: 10px 20px; background: #f59e0b; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight:bold; white-space:nowrap;">Update & Reset Data</button>
-        <a href="robo_run_now.php" style="padding:10px 20px; background:#2563eb; color:#fff; text-decoration:none; border-radius:5px; font-weight:bold; white-space:nowrap; display:inline-flex; align-items:center;">Jalankan Robot Sekarang</a>
+        <a id="btnRunRobotNow" href="<?= htmlspecialchars($portfolioUrl('robo_run_now.php'), ENT_QUOTES, 'UTF-8') ?>" style="padding:10px 20px; background:#2563eb; color:#fff; text-decoration:none; border-radius:5px; font-weight:bold; white-space:nowrap; display:inline-flex; align-items:center;">Jalankan Robot Sekarang</a>
         </form>
     </div>
 </div>
@@ -641,6 +798,16 @@ $pageTitle = 'Robo-Trader Simulator | Analisis Saham';
 
 <div id="robotLastRun" style="margin:10px 0 20px 0; color:#64748b; font-size:13px; font-style:italic;"></div>
 <script>
+function setRoboLoading(isLoading, text) {
+    var overlay = document.getElementById('roboLoadingOverlay');
+    var label = document.getElementById('roboLoadingText');
+    if (!overlay) return;
+    if (label && text) {
+        label.textContent = text;
+    }
+    overlay.classList.toggle('active', !!isLoading);
+}
+
 function updateRobotLastRun(msg) {
     var el = document.getElementById('robotLastRun');
     if (!el) return;
@@ -649,22 +816,40 @@ function updateRobotLastRun(msg) {
     el.textContent = 'Terakhir robot dijalankan: ' + timeStr + (msg ? ' — ' + msg : '');
 }
 
+function runRoboAuto() {
+    setRoboLoading(true, 'Robo AI otomatis sedang berjalan...');
+    return fetch('robo_run_api.php')
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            var extra = '';
+            if (data.runtime && data.runtime.profile) {
+                extra = ' [' + data.runtime.profile + ' | ' + ((data.runtime.market && data.runtime.market.sentiment_label) ? data.runtime.market.sentiment_label : 'NETRAL') + ']';
+            }
+            updateRobotLastRun((data.msg || 'Selesai.') + extra);
+        })
+        .catch(function () {
+            updateRobotLastRun('Gagal mengambil status robo otomatis.');
+        })
+        .finally(function () {
+            setRoboLoading(false);
+        });
+}
+
 // Jalankan saat halaman dimuat (ambil status awal)
 document.addEventListener('DOMContentLoaded', function() {
-    fetch('robo_run_api.php')
-        .then(r => r.json())
-        .then(data => {
-            updateRobotLastRun(data.msg);
+    var runNowBtn = document.getElementById('btnRunRobotNow');
+    if (runNowBtn) {
+        runNowBtn.addEventListener('click', function () {
+            setRoboLoading(true, 'Robo AI manual sedang dijalankan...');
         });
+    }
+
+    runRoboAuto();
 });
 
 // Update setiap kali robot auto-run
 setInterval(function() {
-    fetch('robo_run_api.php')
-        .then(r => r.json())
-        .then(data => {
-            updateRobotLastRun(data.msg);
-        });
+    runRoboAuto();
 }, 60000);
 </script>
 
@@ -768,11 +953,11 @@ setInterval(function() {
 </div>
 
 <div class="tbl-container">
-    <div class="tbl-header" style="flex-wrap:wrap; gap:10px;">
+    <div class="tbl-header open-trades-header">
         <span>Posisi Menggantung (OPEN TRADES)</span>
-        <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
-            <button id="btnRefreshPrice" onclick="fetchLivePrices(false)" style="padding:6px 14px; background:#0ea5e9; color:#fff; border:none; border-radius:5px; cursor:pointer; font-size:13px; font-weight:bold;">&#x21bb; Refresh Harga Live <span id="liveCountdown" style="font-size:11px; opacity:0.8;"></span></button>
-            <span id="liveRefreshStatus" style="font-size:11px; color:#64748b;">Auto-refresh setiap 30 detik</span>
+        <div class="open-trades-actions">
+            <button id="btnRefreshPrice" class="btn-refresh-live" onclick="fetchLivePrices(false)">&#x21bb; Refresh Harga Live <span id="liveCountdown" style="font-size:11px; opacity:0.8;"></span></button>
+            <span id="liveRefreshStatus" class="live-status">Auto-refresh setiap 5 detik</span>
         </div>
     </div>
     <div style="padding:10px 20px; font-size:12px; color:#475569; border-bottom:1px solid #e2e8f0; background:#f8fafc;">
@@ -934,7 +1119,7 @@ setInterval(function() {
 <div class="tbl-container" style="border-top: 4px solid #3b82f6;">
     <div class="tbl-header">Rekomendasi Menunggu (Belum Dibeli)</div>
     <div style="padding:10px 20px; font-size:12px; color:#475569; border-bottom:1px solid #e2e8f0; background:#f8fafc;">
-        Kandidat ini lolos sinyal teknikal, namun belum dieksekusi karena prioritas antrian, batas slot, saldo, atau aturan alokasi robot.
+        Kandidat dengan Golden Cross dalam <b>3 hari terakhir</b> + sinyal AI BUY yang masih aktif. Badge <span style="background:#16a34a;color:#fff;padding:1px 5px;border-radius:3px;font-size:11px;">BARU</span> = crossover hari ini, <span style="background:#2563eb;color:#fff;padding:1px 5px;border-radius:3px;font-size:11px;">D+n</span> = crossover n hari lalu.
     </div>
     <table>
         <thead>
@@ -942,6 +1127,7 @@ setInterval(function() {
                 <th>Ticker</th>
                 <th>Harga Monitor</th>
                 <th>Score</th>
+                <th>Signal</th>
                 <th>Estimasi Lot</th>
                 <th>Status</th>
                 <th>Sinyal AI</th>
@@ -950,7 +1136,7 @@ setInterval(function() {
         </thead>
         <tbody>
             <?php if (count($pending_reco) == 0): ?>
-            <tr><td colspan="7" style="text-align:center; padding: 20px; color:#94a3b8;">Belum ada kandidat menunggu saat ini.</td></tr>
+            <tr><td colspan="8" style="text-align:center; padding: 20px; color:#94a3b8;">Belum ada kandidat menunggu saat ini. (Tidak ada saham dengan Golden Cross 3 hari terakhir + sinyal AI BUY + volume breakout yang memenuhi threshold.)</td></tr>
             <?php else: ?>
                 <?php foreach ($pending_reco as $c): ?>
                 <tr>
@@ -958,6 +1144,16 @@ setInterval(function() {
                     <td>Rp <?= number_format($c['price'], 0, ',', '.') ?></td>
                     <td>
                         <span class="badge bg-blue"><?= (int)$c['score'] ?>/99</span>
+                    </td>
+                    <td>
+                        <?php
+                            $cda = isset($c['cross_days_ago']) ? (int)$c['cross_days_ago'] : 0;
+                            if ($cda === 0) {
+                                echo '<span style="background:#16a34a;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;">BARU</span>';
+                            } else {
+                                echo '<span style="background:#2563eb;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;">D+' . $cda . '</span>';
+                            }
+                        ?>
                     </td>
                     <td><?= isset($c['lots']) ? (int)$c['lots'] : 0 ?> lot</td>
                     <td>
@@ -987,11 +1183,13 @@ setInterval(function() {
 <script>
 var _liveRefreshTimer = null;
 var _liveCountdownTimer = null;
-var _liveCountdownSec = 30;
+var _liveRefreshIntervalMs = 5000;
+var _liveCountdownSec = _liveRefreshIntervalMs / 1000;
+var _liveRefreshInFlight = false;
 
 function fetchLivePrices(silent) {
     const rows = document.querySelectorAll('[data-symbol]');
-    if (!rows.length) return;
+    if (!rows.length || _liveRefreshInFlight) return;
 
     const btn = document.getElementById('btnRefreshPrice');
     const statusEl = document.getElementById('liveRefreshStatus');
@@ -999,12 +1197,9 @@ function fetchLivePrices(silent) {
     if (statusEl) statusEl.textContent = 'Memperbarui harga...';
 
     const symbols = Array.from(rows).map(r => r.dataset.symbol);
+    _liveRefreshInFlight = true;
 
-    fetch('robo_live_price.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbols })
-    })
+    fetch('fetch_realtime.php?symbols=' + encodeURIComponent(symbols.join(',')))
     .then(r => r.json())
     .then(data => {
         let totalEquity = <?= $balance ?>;
@@ -1012,7 +1207,9 @@ function fetchLivePrices(silent) {
             const sym = row.dataset.symbol;
             const buyPrice = parseFloat(row.dataset.buy);
             const lots = parseInt(row.dataset.lots);
-            const live = data[sym];
+            const live = data && data.data && data.data[sym] && !data.data[sym].error
+                ? Number(data.data[sym].price)
+                : null;
 
             if (!live || live <= 0) {
                 totalEquity += buyPrice * lots * 100;
@@ -1040,21 +1237,19 @@ function fetchLivePrices(silent) {
             }
         });
 
-        // Update equity card
         const equityEl = document.getElementById('cardTotalEquity');
         if (equityEl) equityEl.textContent = 'Rp ' + totalEquity.toLocaleString('id-ID', {maximumFractionDigits:0});
 
         const now = new Date();
         const timeStr = now.toLocaleTimeString('id-ID');
         if (statusEl) statusEl.textContent = 'Terakhir diperbarui: ' + timeStr;
-        if (btn) { btn.disabled = false; }
-
-        // Reset countdown
-        _startCountdown();
     })
     .catch(() => {
-        if (btn) { btn.disabled = false; }
         if (statusEl) statusEl.textContent = 'Gagal memperbarui harga.';
+    })
+    .finally(() => {
+        _liveRefreshInFlight = false;
+        if (btn) { btn.disabled = false; }
         _startCountdown();
     });
 }
@@ -1062,7 +1257,7 @@ function fetchLivePrices(silent) {
 function _startCountdown() {
     clearInterval(_liveCountdownTimer);
     clearInterval(_liveRefreshTimer);
-    _liveCountdownSec = 30;
+    _liveCountdownSec = _liveRefreshIntervalMs / 1000;
     const statusEl = document.getElementById('liveRefreshStatus');
 
     _liveCountdownTimer = setInterval(function() {
@@ -1079,7 +1274,7 @@ function _startCountdown() {
 
     _liveRefreshTimer = setTimeout(function() {
         fetchLivePrices(true);
-    }, 30000);
+    }, _liveRefreshIntervalMs);
 }
 
 // Auto-start on page load if there are open positions

@@ -182,67 +182,79 @@ $pageTitle = 'Autopilot Portofolio Planner | Analisis Saham';
     </div>
 
   <script>
-    // Polling live price tiap 10 detik via ajax goapi
-    function fetchLivePrices() {
-      const rows = document.querySelectorAll('#portBody tr[data-symbol]');
-      rows.forEach(r => {
-        const sym = r.getAttribute('data-symbol');
-        const buy = parseFloat(r.getAttribute('data-buy'));
-        const target = parseFloat(r.getAttribute('data-target'));
-        const lots = parseInt(r.getAttribute('data-lots')) || 0;
+    // Polling live price tiap 5 detik via endpoint multi-source
+    let _manualLiveRefreshInFlight = false;
+    const _manualLiveRefreshMs = 5000;
 
-        fetch('fetch_realtime.php?symbols=' + sym)
+    function fetchLivePrices() {
+      const rows = Array.from(document.querySelectorAll('#portBody tr[data-symbol]'));
+      if (!rows.length || _manualLiveRefreshInFlight) return;
+
+      const symbols = Array.from(new Set(rows.map(r => r.getAttribute('data-symbol')).filter(Boolean)));
+      if (!symbols.length) return;
+
+      _manualLiveRefreshInFlight = true;
+      fetch('fetch_realtime.php?symbols=' + encodeURIComponent(symbols.join(',')))
         .then(res => res.json())
         .then(data => {
-            if(data.data && data.data[sym] && data.data[sym].price) {
-                const currStr = data.data[sym].price;
-                // remove commas if any
-                const curr = parseFloat(String(currStr).replace(/,/g, ''));
-                r.querySelector('.curr-price').innerText = "Rp " + curr.toLocaleString('id-ID');
+          rows.forEach(r => {
+            const sym = r.getAttribute('data-symbol');
+            const buy = parseFloat(r.getAttribute('data-buy'));
+            const target = parseFloat(r.getAttribute('data-target'));
+            const lots = parseInt(r.getAttribute('data-lots')) || 0;
+            const item = data && data.data ? data.data[sym] : null;
 
-                const pct = ((curr - buy) / buy) * 100;
-                let color = pct > 0 ? "#166534" : (pct < 0 ? "#991b1b" : "#475569");
-                let bgcolor = pct > 0 ? "#dcfce7" : (pct < 0 ? "#fee2e2" : "#f1f5f9");
-                r.querySelector('.float-pct').innerHTML = `<span style="background:${bgcolor}; color:${color}; padding:4px 8px; border-radius:4px; font-weight:bold;">${pct > 0 ? '+' : ''}${pct.toFixed(2)}%</span>`;
-
-                // Calculate P/L
-                const invest_val = buy * lots * 100;
-                const curr_val = curr * lots * 100;
-                const pl = curr_val - invest_val;
-                const plText = (pl > 0 ? '+' : '') + "Rp " + pl.toLocaleString('id-ID');
-                r.querySelector('.pl-val').innerHTML = `<span style="color:${color}; font-weight:bold;">${plText}</span>`;
-
-                let recClass = "hold";
-                let recText = "HOLDING (AMAN)";
-                let recIcon = "&#x23F3;"; // hourglass
-                let recDetail = "";
-
-                if (curr >= target) {
-                   recClass = "buy";
-                   recText = "TAKE PROFIT (HIT)";
-                   recIcon = "&#x1F680;"; // rocket
-                   recDetail = "Harga menembus target, segera amankan profit Anda!";
-                } else if (pct <= -3) {
-                   recClass = "sell";
-                   recText = "CUT LOSS (-3%)";
-                   recIcon = "&#x1F6A8;"; // siren
-                   recDetail = "Batas resiko tertembus! Jangan biarkan minus semakin dalam.";
-                } else if (pct > 0) {
-                   recIcon = "&#x2705;"; // green check
-                   recDetail = "Posisi untung. Tahan sampai menyentuh target TP Anda.";
-                } else {
-                   recIcon = "&#x26A0;&#xFE0F;"; // warning
-                   recDetail = "Posisi merah. Awasi harga support terdekat sebelum Cut Loss.";
-                }
-
-                r.querySelector('.status-bot').innerHTML = `<span class="badge ${recClass}">${recIcon} ${recText}</span><br><span style="font-size:11px; color:#64748b; display:inline-block; margin-top:6px; line-height:1.4;">${recDetail}</span>`;
+            if (!item || item.error || !item.price) {
+              return;
             }
+
+            const curr = parseFloat(String(item.price).replace(/,/g, ''));
+            r.querySelector('.curr-price').innerText = "Rp " + curr.toLocaleString('id-ID');
+
+            const pct = ((curr - buy) / buy) * 100;
+            let color = pct > 0 ? "#166534" : (pct < 0 ? "#991b1b" : "#475569");
+            let bgcolor = pct > 0 ? "#dcfce7" : (pct < 0 ? "#fee2e2" : "#f1f5f9");
+            r.querySelector('.float-pct').innerHTML = `<span style="background:${bgcolor}; color:${color}; padding:4px 8px; border-radius:4px; font-weight:bold;">${pct > 0 ? '+' : ''}${pct.toFixed(2)}%</span>`;
+
+            const invest_val = buy * lots * 100;
+            const curr_val = curr * lots * 100;
+            const pl = curr_val - invest_val;
+            const plText = (pl > 0 ? '+' : '') + "Rp " + pl.toLocaleString('id-ID');
+            r.querySelector('.pl-val').innerHTML = `<span style="color:${color}; font-weight:bold;">${plText}</span>`;
+
+            let recClass = "hold";
+            let recText = "HOLDING (AMAN)";
+            let recIcon = "&#x23F3;";
+            let recDetail = "";
+
+            if (curr >= target) {
+               recClass = "buy";
+               recText = "TAKE PROFIT (HIT)";
+               recIcon = "&#x1F680;";
+               recDetail = "Harga menembus target, segera amankan profit Anda!";
+            } else if (pct <= -3) {
+               recClass = "sell";
+               recText = "CUT LOSS (-3%)";
+               recIcon = "&#x1F6A8;";
+               recDetail = "Batas resiko tertembus! Jangan biarkan minus semakin dalam.";
+            } else if (pct > 0) {
+               recIcon = "&#x2705;";
+               recDetail = "Posisi untung. Tahan sampai menyentuh target TP Anda.";
+            } else {
+               recIcon = "&#x26A0;&#xFE0F;";
+               recDetail = "Posisi merah. Awasi harga support terdekat sebelum Cut Loss.";
+            }
+
+            r.querySelector('.status-bot').innerHTML = `<span class="badge ${recClass}">${recIcon} ${recText}</span><br><span style="font-size:11px; color:#64748b; display:inline-block; margin-top:6px; line-height:1.4;">${recDetail}</span>`;
+          });
+        })
+        .finally(() => {
+          _manualLiveRefreshInFlight = false;
         });
-      });
     }
 
     fetchLivePrices();
-    setInterval(fetchLivePrices, 10000); // refresh tiap 10 detik
+    setInterval(fetchLivePrices, _manualLiveRefreshMs); // refresh tiap 5 detik
 
     // --- AJAX CRUD (No Reload) ---
     

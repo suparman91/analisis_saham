@@ -8,15 +8,10 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/analyze.php';
 require_once __DIR__ . '/telegram_crypto.php';
 
-// ==========================================
-// KONFIGURASI TELEGRAM BOT
-// ==========================================
-$bot_token = "8659586557:AAE8p2N49c81NwU9vh93TbQb92C8iJMcwU4"; 
-
-// Catatan: List penerima Telegram (Chat ID) 
-// sekarang akan ditarik dinamis dan di-dekripsi dari Database `telegram_subscribers` !
-
-// ==========================================
+$bot_token = tg_bot_token();
+if ($bot_token === '') {
+    exit("Telegram bot token belum dikonfigurasi.\n");
+}
 
 $mysqli = db_connect();
 
