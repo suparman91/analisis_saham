@@ -12,15 +12,84 @@ set_time_limit(0);
 
 echo "Mulai mengambil daftar emiten dari database...\n";
 $today = date('Y-m-d');
+$now_time = date('H:i:s');
+$day_of_week = (int)date('N');
+$is_trading_day = ($day_of_week >= 1 && $day_of_week <= 5);
+$market_open_time = '09:00:00';
+$market_close_time = '16:15:00';
+$is_pre_open = $is_trading_day && ($now_time < $market_open_time);
+$is_after_close = $is_trading_day && ($now_time >= $market_close_time);
+
+function is_placeholder_row(array $row): bool {
+    $o = isset($row['open']) ? (float)$row['open'] : null;
+    $h = isset($row['high']) ? (float)$row['high'] : null;
+    $l = isset($row['low']) ? (float)$row['low'] : null;
+    $c = isset($row['close']) ? (float)$row['close'] : null;
+    $v = isset($row['volume']) ? (int)$row['volume'] : null;
+
+    if ($o === null || $h === null || $l === null || $c === null || $v === null) {
+        return false;
+    }
+
+    return ($v === 0 && $o === $h && $h === $l && $l === $c);
+}
 
 // Ambil daftar simbol yang sudah terisi untuk hari ini agar bisa di-skip, KECUALI jika mode Paksa Update EOD.
 $updatedToday = [];
 $is_force_update = isset($forceUpdate) && $forceUpdate === true;
 
+// Pre-open: isi placeholder hari ini dari close valid terakhir agar semua simbol sudah punya data baseline.
+// Placeholder dibuat dengan pola O=H=L=C dan volume=0 agar mudah dikenali lalu di-refresh lagi saat market buka.
+$prefilled_preopen = 0;
+if (!$is_force_update && $is_pre_open) {
+    $missingRes = $mysqli->query("\n        SELECT s.symbol\n        FROM stocks s\n        LEFT JOIN prices p ON p.symbol = s.symbol AND p.date = '" . $mysqli->real_escape_string($today) . "'\n        WHERE p.symbol IS NULL\n          AND s.symbol LIKE '%.JK'\n          AND s.symbol <> '^JKSE'\n        ORDER BY s.symbol ASC\n    ");
+
+    if ($missingRes) {
+        $stmtPreOpen = $mysqli->prepare("\n            INSERT INTO prices (symbol, date, open, high, low, close, volume)\n            VALUES (?, ?, ?, ?, ?, ?, ?)\n            ON DUPLICATE KEY UPDATE\n                open=VALUES(open), high=VALUES(high), low=VALUES(low), close=VALUES(close), volume=VALUES(volume)\n        ");
+
+        if ($stmtPreOpen) {
+            while ($m = $missingRes->fetch_assoc()) {
+                $sym = strtoupper(trim((string)$m['symbol']));
+                if ($sym === '') {
+                    continue;
+                }
+
+                $symEsc = $mysqli->real_escape_string($sym);
+                $ref = $mysqli->query("\n                    SELECT close\n                    FROM prices\n                    WHERE symbol = '" . $symEsc . "'\n                      AND date < '" . $mysqli->real_escape_string($today) . "'\n                    ORDER BY date DESC\n                    LIMIT 1\n                ");
+                $rr = $ref ? $ref->fetch_assoc() : null;
+                if (!$rr || !isset($rr['close']) || $rr['close'] === null) {
+                    continue;
+                }
+
+                $c = (float)$rr['close'];
+                $o = $c;
+                $h = $c;
+                $l = $c;
+                $v = 0;
+
+                $stmtPreOpen->bind_param('ssddddi', $sym, $today, $o, $h, $l, $c, $v);
+                if ($stmtPreOpen->execute()) {
+                    $prefilled_preopen++;
+                }
+            }
+            $stmtPreOpen->close();
+        }
+    }
+
+    if ($prefilled_preopen > 0) {
+        echo "Pre-open placeholder terisi: $prefilled_preopen simbol (baseline close terakhir).\n";
+    }
+}
+
 if (!$is_force_update) {
-    $resToday = $mysqli->query("SELECT symbol FROM prices WHERE date = '" . $mysqli->real_escape_string($today) . "'");
+    $resToday = $mysqli->query("SELECT symbol, open, high, low, close, volume FROM prices WHERE date = '" . $mysqli->real_escape_string($today) . "'");
+    $allow_placeholder_refresh = !$is_pre_open;
     if ($resToday) {
         while ($rt = $resToday->fetch_assoc()) {
+            if ($allow_placeholder_refresh && is_placeholder_row($rt)) {
+                // Placeholder pre-open harus diganti data real saat market berjalan.
+                continue;
+            }
             $updatedToday[strtoupper(trim($rt['symbol']))] = true;
         }
     }
@@ -172,6 +241,54 @@ foreach ($batches as $index => $batch) {
     $batch_num = $index + 1;
     echo "Selesai Batch #$batch_num. Istirahat 2 detik supaya tidak ter-banned Yahoo...\n";
     sleep(2);
+}
+
+// Fallback carry-forward dibatasi setelah jam tutup bursa agar intraday tetap murni dari feed realtime.
+$backfill_days = 14;
+$backfilled = 0;
+$allow_backfill = $is_force_update || $is_after_close;
+
+if ($allow_backfill) {
+    $missingRes = $mysqli->query("\n        SELECT s.symbol\n        FROM stocks s\n        LEFT JOIN prices p ON p.symbol = s.symbol AND p.date = '" . $mysqli->real_escape_string($today) . "'\n        WHERE p.symbol IS NULL\n          AND s.symbol LIKE '%.JK'\n          AND s.symbol <> '^JKSE'\n        ORDER BY s.symbol ASC\n    ");
+
+    if ($missingRes) {
+        $stmtBackfill = $mysqli->prepare("\n            INSERT INTO prices (symbol, date, open, high, low, close, volume)\n            VALUES (?, ?, ?, ?, ?, ?, ?)\n            ON DUPLICATE KEY UPDATE\n                open=VALUES(open), high=VALUES(high), low=VALUES(low), close=VALUES(close), volume=VALUES(volume)\n        ");
+
+        if ($stmtBackfill) {
+            while ($m = $missingRes->fetch_assoc()) {
+                $sym = strtoupper(trim((string)$m['symbol']));
+                if ($sym === '') {
+                    continue;
+                }
+
+                $symEsc = $mysqli->real_escape_string($sym);
+                $ref = $mysqli->query("\n                    SELECT open, high, low, close\n                    FROM prices\n                    WHERE symbol = '" . $symEsc . "'\n                      AND date < '" . $mysqli->real_escape_string($today) . "'\n                      AND date >= DATE_SUB('" . $mysqli->real_escape_string($today) . "', INTERVAL " . (int)$backfill_days . " DAY)\n                    ORDER BY date DESC\n                    LIMIT 1\n                ");
+                $rr = $ref ? $ref->fetch_assoc() : null;
+                if (!$rr || !isset($rr['close']) || $rr['close'] === null) {
+                    continue;
+                }
+
+                $o = (float)($rr['open'] ?? $rr['close']);
+                $h = (float)($rr['high'] ?? $rr['close']);
+                $l = (float)($rr['low'] ?? $rr['close']);
+                $c = (float)$rr['close'];
+                $v = 0;
+
+                $stmtBackfill->bind_param('ssddddi', $sym, $today, $o, $h, $l, $c, $v);
+                if ($stmtBackfill->execute()) {
+                    $backfilled++;
+                }
+            }
+            $stmtBackfill->close();
+        }
+    }
+
+    if ($backfilled > 0) {
+        $total_updated += $backfilled;
+        echo "\nFallback carry-forward berhasil untuk $backfilled simbol (window $backfill_days hari).\n";
+    }
+} else {
+    echo "Fallback carry-forward dilewati (waktu sekarang $now_time, aktif setelah $market_close_time atau mode paksa).\n";
 }
 
 echo "====================================\n";

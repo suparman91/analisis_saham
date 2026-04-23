@@ -1,11 +1,14 @@
 <?php
+require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/db.php';
 
+require_login();
 date_default_timezone_set('Asia/Jakarta');
 
 $mysqli = db_connect();
+$user_id = get_user_id();
 
-$res = $mysqli->query("SELECT symbol FROM watchlist");
+$res = $mysqli->query("SELECT symbol FROM watchlist WHERE user_id = $user_id ORDER BY created_at DESC");
 $symbols = [];
 while ($row = $res->fetch_assoc()) {
     $sym = strtoupper(trim($row['symbol']));

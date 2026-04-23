@@ -46,6 +46,28 @@ if (!is_logged_in()) {
                 margin-left: auto;
                 margin-right: auto;
             }
+            .trial-badge {
+                display: inline-block;
+                padding: 8px 14px;
+                border-radius: 999px;
+                background: rgba(251, 191, 36, 0.2);
+                border: 1px solid rgba(251, 191, 36, 0.6);
+                color: #fde68a;
+                font-size: 0.9rem;
+                font-weight: 700;
+                margin-bottom: 18px;
+            }
+            .hero-disclaimer {
+                max-width: 900px;
+                margin: 25px auto 0 auto;
+                padding: 12px 14px;
+                font-size: 0.95rem;
+                line-height: 1.5;
+                border-radius: 10px;
+                border: 1px solid rgba(251, 191, 36, 0.45);
+                background: rgba(15, 23, 42, 0.5);
+                color: #fef3c7;
+            }
             .cta-buttons {
                 margin-top: 40px;
             }
@@ -128,16 +150,29 @@ if (!is_logged_in()) {
             .footer p {
                 margin: 0;
             }
+            @media (max-width: 768px) {
+                .hero { padding: 70px 14px; }
+                .hero h1 { font-size: 2rem; }
+                .hero p { font-size: 1rem; }
+                .btn { display: block; margin: 10px auto; width: 100%; max-width: 280px; }
+                .features { padding: 50px 14px; }
+                .features h2 { font-size: 1.8rem; }
+                .feature-grid { grid-template-columns: 1fr; gap: 20px; }
+            }
         </style>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     </head>
     <body>
         <section class="hero">
+            <span class="trial-badge">Public Trial Mode</span>
             <h1>🚀 Analisis Saham Auto-Trader</h1>
             <p>Platform canggih untuk analisis dan trading saham Indonesia. Gunakan AI, scanner momentum, dan robo-trader untuk maksimalkan keuntungan Anda.</p>
             <div class="cta-buttons">
                 <a href="login.php" class="btn btn-primary"><i class="fas fa-sign-in-alt"></i> Masuk Akun</a>
                 <a href="register.php" class="btn btn-secondary"><i class="fas fa-user-plus"></i> Daftar Gratis</a>
+            </div>
+            <div class="hero-disclaimer">
+                Disclaimer: Platform ini untuk analisa dan edukasi, bukan ajakan jual beli efek, bukan anjuran harga, dan bukan nasihat investasi.
             </div>
         </section>
 
@@ -186,14 +221,20 @@ if (!is_logged_in()) {
     exit;
 }
 
+if (!isset($_GET['embed']) || $_GET['embed'] !== '1') {
+    header('Location: app.php?page=index.php');
+    exit;
+}
+
 require_once __DIR__ . '/db.php';
 $mysqli = db_connect();
 require_login();
 require_subscription($mysqli);
 
-// Fetch Watchlist
+// Fetch Watchlist (Per-User)
 $watchlist = [];
-$resWl = $mysqli->query("SELECT symbol FROM watchlist");
+$user_id = get_user_id();
+$resWl = $mysqli->query("SELECT symbol FROM watchlist WHERE user_id = $user_id");
 if ($resWl) {
     while ($rw = $resWl->fetch_assoc()) {
         $watchlist[strtoupper(trim($rw['symbol']))] = true;
@@ -586,8 +627,21 @@ $days_left = $subscription_end ? ceil((strtotime($subscription_end) - time()) / 
   <link rel="apple-touch-icon" href="icon-192.png">
   <title>Dashboard Pasar IHSG</title>
   <style>
-    body{font-family:Arial,Helvetica,sans-serif;margin:20px;background:#f8f9fa;}
-    .container { max-width:1200px; margin:0 auto; }
+    body{
+      font-family:Arial,Helvetica,sans-serif;
+      margin:0;
+      padding:0;
+      background:#f8f9fa;
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+    .container { 
+      width: 100%;
+      margin:0;
+      box-sizing: border-box;
+      padding: 0 15px;
+    }
     h1 { color:#333; margin-bottom: 5px;}
     .subtitle { color:#666; font-size:14px; margin-bottom:20px; }
     
@@ -617,6 +671,8 @@ $days_left = $subscription_end ? ceil((strtotime($subscription_end) - time()) / 
     table { width:100%; border-collapse:collapse; font-size:13px; margin-bottom:0; }
     th, td { padding:10px 8px; text-align:left; border-bottom:1px solid #eee; }
     th { background:#f1f3f5; font-weight:bold; color:#495057; }
+
+    .table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
     
     .text-right { text-align:right; }
     .text-center { text-align:center; }
@@ -653,7 +709,31 @@ $days_left = $subscription_end ? ceil((strtotime($subscription_end) - time()) / 
         .headline-list a:hover { text-decoration:underline; }          .star-btn { cursor: pointer; color: #cbd5e1; font-size: 16px; margin-right: 5px; transition: color 0.2s; user-select: none; }
           .star-btn:hover { color: #fbbf24; }
           .star-btn.active { color: #f59e0b; }
-          #watchlist-panel table th { background: #fef3c7; color: #92400e; }  </style>
+                    #watchlist-panel table th { background: #fef3c7; color: #92400e; }
+
+        @media (min-width: 1500px) {
+            body { margin: 24px; }
+            .grid { gap: 24px; }
+            .panel { padding: 18px; }
+            th, td { font-size: 13px; }
+        }
+
+        @media (max-width: 992px) {
+            body { 
+              margin: 0; 
+              padding: 0;
+            }
+            .container { 
+              width: 100%;
+              padding: 0 10px;
+            }
+            .grid { grid-template-columns: 1fr; gap: 14px; }
+            .panel { padding: 12px; border-radius: 10px; }
+            .panel h3 { font-size: 15px; }
+            th, td { padding: 8px 6px; font-size: 12px; }
+            #auto-update-banner { left: 12px; right: 12px; bottom: 12px; }
+        }
+    </style>
 </head>
 <body>
 
@@ -671,6 +751,9 @@ $days_left = $subscription_end ? ceil((strtotime($subscription_end) - time()) / 
     $last_update_time = file_exists($last_update_txt) ? date('d M Y H:i', filemtime($last_update_txt)) : 'Belum Pernah';
     ?>
     <h1>Dashboard Pasar IHSG</h1>
+    <div style="background:#fff7ed; border:1px solid #fdba74; color:#7c2d12; padding:10px 12px; border-radius:8px; margin-bottom:12px; font-size:12px; line-height:1.5;">
+        Mode public trial: seluruh data dan sinyal pada dashboard digunakan untuk analisa/edukasi, bukan ajakan jual beli, bukan anjuran harga, dan bukan nasihat investasi.
+    </div>
     <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
         <div class="subtitle" style="margin-bottom:0; line-height: 1.4;">
             <strong>Data Referensi:</strong> <?= $today; ?> <br>
@@ -739,7 +822,7 @@ $days_left = $subscription_end ? ceil((strtotime($subscription_end) - time()) / 
         <!-- Gainers -->
         <div class="panel">
             <h3>📈 <?= $gainer_title; ?></h3>
-            <table>
+            <div class="table-responsive"><table>
                 <tr>
                     <th>Symbol</th>
                     <th class="text-right">Harga</th>
@@ -753,13 +836,13 @@ $days_left = $subscription_end ? ceil((strtotime($subscription_end) - time()) / 
                 </tr>
                 <?php endforeach; ?>
                 <?php if (empty($gainers)) echo '<tr><td colspan="3" class="text-center">Tidak ada data.</td></tr>'; ?>
-            </table>
+            </table></div>
         </div>
 
         <!-- Losers -->
         <div class="panel">
             <h3>📉 <?= $loser_title; ?></h3>
-            <table>
+            <div class="table-responsive"><table>
                 <tr>
                     <th>Symbol</th>
                     <th class="text-right">Harga</th>
@@ -773,14 +856,14 @@ $days_left = $subscription_end ? ceil((strtotime($subscription_end) - time()) / 
                 </tr>
                 <?php endforeach; ?>
                 <?php if (empty($losers)) echo '<tr><td colspan="3" class="text-center">Tidak ada data.</td></tr>'; ?>
-            </table>
+            </table></div>
         </div>
 
         <!-- Rekomendasi Multibagger -->
         <div class="panel full-width" style="border: 2px solid #0d6efd;">
             <h3 style="color:#0d6efd;">🚀 Semua Saham Berpotensi Multibagger</h3>
             <p style="font-size:13px; color:#555; margin-top:-5px; margin-bottom:15px;">Saham dengan likuiditas tinggi dan momentum kenaikan kuat. Berpotensi memberikan keuntungan kelipatan besar dengan profil *High Risk*.</p>
-            <table>
+            <div class="table-responsive"><table>
                 <tr>
                     <th>Symbol</th>
                     <th>Nama Perusahaan</th>
@@ -838,14 +921,14 @@ $days_left = $subscription_end ? ceil((strtotime($subscription_end) - time()) / 
                 </tr>
                 <?php endforeach; ?>
                 <?php if (empty($potential_multibaggers)) echo '<tr><td colspan="11" class="text-center">Tidak ada saham multibagger potensial saat ini.</td></tr>'; ?>
-            </table>
+            </table></div>
         </div>
         
         <!-- Top Volume & Bandar -->
         <div class="panel full-width">
             <h3>📊 Top Volume & Analisis Bandar (Broker Flow)</h3>
             <p style="font-size:12px; color:#888; margin-top:-5px;">*Disclaimer: Data broker (Asing/Lokal) adalah estimasi berdasarkan distribusi transaksi (Volume/Value).</p>
-            <table>
+            <div class="table-responsive"><table>
                 <tr>
                     <th>Symbol</th>
                     <th class="text-right">Harga</th>
@@ -901,7 +984,7 @@ $days_left = $subscription_end ? ceil((strtotime($subscription_end) - time()) / 
                 </tr>
                 <?php endforeach; ?>
                 <?php if (empty($top_volume)) echo '<tr><td colspan="10" class="text-center">Tidak ada data transaksi.</td></tr>'; ?>
-            </table>
+            </table></div>
         </div>
 
     </div>

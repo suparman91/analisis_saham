@@ -16,6 +16,14 @@ function is_bursa_open() {
 require_once __DIR__ . '/auth.php';
 require_login();
 
+$isEmbedded = isset($_GET['embed']) && $_GET['embed'] === '1';
+$portfolioUrl = static function (string $path) use ($isEmbedded): string {
+    if (!$isEmbedded) {
+        return $path;
+    }
+    return $path . (strpos($path, '?') === false ? '?' : '&') . 'embed=1';
+};
+
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/analyze.php';
 
@@ -100,7 +108,7 @@ function isRealtimePriceValid($rtPrice, $dbClose) {
 // Validate user & current balance
 $resUser = $mysqli->query("SELECT id, email, robo_balance FROM users WHERE id = {$user_id} LIMIT 1");
 if (!$resUser || $resUser->num_rows === 0) {
-    header('Location: portfolio.php?robo_run=err&msg=' . urlencode('User tidak ditemukan.'));
+    header('Location: ' . $portfolioUrl('portfolio.php?robo_run=err&msg=' . urlencode('User tidak ditemukan.')));
     exit;
 }
 $user = $resUser->fetch_assoc();
@@ -375,5 +383,5 @@ if (count($actions) === 0) {
     }
 }
 
-header('Location: portfolio.php?robo_run=ok&msg=' . urlencode($msg));
+header('Location: ' . $portfolioUrl('portfolio.php?robo_run=ok&msg=' . urlencode($msg)));
 exit;

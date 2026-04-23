@@ -2,6 +2,14 @@
 require_once 'auth.php'; // Panggil session
 require_login();         // Wajib masuk
 
+$isEmbedded = isset($_GET['embed']) && $_GET['embed'] === '1';
+$portfolioUrl = static function (string $path) use ($isEmbedded): string {
+    if (!$isEmbedded) {
+        return $path;
+    }
+    return $path . (strpos($path, '?') === false ? '?' : '&') . 'embed=1';
+};
+
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/analyze.php';
 $mysqli = db_connect();
@@ -42,7 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['modal_awal'])) {
             echo json_encode(['status' => 'success']);
             exit;
         }
-        header("Location: portfolio.php");
+        header("Location: " . $portfolioUrl("portfolio.php"));
         exit;
     }
 }
@@ -56,15 +64,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['tambah_saldo'])) {
         $ok = $stmt->execute();
 
         if ($ok) {
-            header("Location: portfolio.php?saldo_action=ok&msg=" . urlencode("Saldo robot bertambah Rp " . number_format($topup, 0, ',', '.')));
+            header("Location: " . $portfolioUrl("portfolio.php?saldo_action=ok&msg=" . urlencode("Saldo robot bertambah Rp " . number_format($topup, 0, ',', '.'))));
             exit;
         }
 
-        header("Location: portfolio.php?saldo_action=err&msg=" . urlencode("Update saldo gagal diproses."));
+        header("Location: " . $portfolioUrl("portfolio.php?saldo_action=err&msg=" . urlencode("Update saldo gagal diproses.")));
         exit;
     }
 
-    header("Location: portfolio.php?saldo_action=err&msg=" . urlencode("Nominal top-up harus lebih dari 0."));
+    header("Location: " . $portfolioUrl("portfolio.php?saldo_action=err&msg=" . urlencode("Nominal top-up harus lebih dari 0.")));
     exit;
 }
 
@@ -86,7 +94,7 @@ if (!isset($_GET['robo_run']) && !isset($_GET['no_auto_robo'])) {
     include_once __DIR__ . '/robo_run_now.php';
     ob_end_clean();
     // Setelah robot dijalankan, reload halaman dengan pesan
-    header('Location: portfolio.php?robo_run=ok&msg=Auto robot dijalankan.');
+    header('Location: ' . $portfolioUrl('portfolio.php?robo_run=ok&msg=Auto robot dijalankan.'));
     exit;
 }
 
@@ -552,7 +560,15 @@ $pageTitle = 'Robo-Trader Simulator | Analisis Saham';
 ?>
 <?php include 'header.php'; ?>
   <style>
-    body { font-family: Arial, sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; background: #f8fafc; }
+    body { 
+      font-family: Arial, sans-serif; 
+      padding: 15px;
+      width: 100%;
+      max-width: 100%;
+      margin: 0;
+      background: #f8fafc;
+      box-sizing: border-box;
+    }
     .top-menu { background: #0f172a; padding: 12px 20px; display: flex; align-items: center; gap: 15px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); flex-wrap: wrap; }
     .top-menu a { color: #cbd5e1; text-decoration: none; padding: 8px 12px; border-radius: 5px; font-weight: 500; font-size: 14px; transition: all 0.2s; white-space: nowrap; }
     .top-menu a:hover { background: #1e293b; color: #fff; }

@@ -7,13 +7,19 @@ require_once __DIR__ . '/telegram_crypto.php';
 $mysqli = db_connect();
 require_subscription($mysqli);
 
+$user_id = get_user_id();
+$isEmbedded = isset($_GET['embed']) && $_GET['embed'] === '1';
+
 // Auto-Create Tabel Penampung Chat ID (Jika Belum Ada)
 $stmt_create = "CREATE TABLE IF NOT EXISTS telegram_subscribers (
     id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
     name VARCHAR(100),
     chat_id_encrypted VARCHAR(255),
     is_active TINYINT(1) DEFAULT 1,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_user_symbol (user_id, name),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 )";
 $mysqli->query($stmt_create);
 
@@ -25,33 +31,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     if ($chat_id !== '') {
         $encrypted = tg_encrypt($chat_id);
     
-        $stmt = $mysqli->prepare("INSERT INTO telegram_subscribers (name, chat_id_encrypted) VALUES (?, ?)");
-        $stmt->bind_param('ss', $name, $encrypted);
+        $stmt = $mysqli->prepare("INSERT INTO telegram_subscribers (user_id, name, chat_id_encrypted) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE chat_id_encrypted = ?");
+        $stmt->bind_param('isss', $user_id, $name, $encrypted, $encrypted);
         $stmt->execute();
+        $stmt->close();
     }
     
-    header("Location: telegram_setting.php?msg=success_add");
+    header("Location: telegram_setting.php?" . ($isEmbedded ? 'embed=1&' : '') . "msg=success_add");
     exit;
 }
 
 // Handle Delete Data
 if (isset($_GET['del'])) {
     $id = (int)$_GET['del'];
-    $mysqli->query("DELETE FROM telegram_subscribers WHERE id = $id");
-    header("Location: telegram_setting.php?msg=success_del");
+    $stmt = $mysqli->prepare("DELETE FROM telegram_subscribers WHERE id = ? AND user_id = ?");
+    $stmt->bind_param('ii', $id, $user_id);
+    $stmt->execute();
+    $stmt->close();
+    
+    if ($isEmbedded) {
+        header("Location: telegram_setting.php?embed=1&msg=success_del");
+    } else {
+        header("Location: telegram_setting.php?msg=success_del");
+    }
     exit;
 }
 
-// Mengambil Data Untuk Ditampilkan
-$res = $mysqli->query("SELECT * FROM telegram_subscribers ORDER BY id DESC");
+// Mengambil Data Untuk Ditampilkan (Per-User)
+$stmt = $mysqli->prepare("SELECT * FROM telegram_subscribers WHERE user_id = ? ORDER BY created_at DESC");
+$stmt->bind_param('i', $user_id);
+$stmt->execute();
+$res = $stmt->get_result();
 ?>
 <?php
-$pageTitle = 'Pengaturan Telegram - ARA Hunter';
+$pageTitle = 'Pengaturan Telegram - Analisis Saham';
 ?>
-<?php include 'header.php'; ?>
+<?php if (!$isEmbedded) include 'header.php'; ?>
   <style>
-    body { font-family: Arial, Helvetica, sans-serif; background: #f8f9fa; margin: 20px; }
-    .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+    body { font-family: Arial, Helvetica, sans-serif; background: #f8f9fa; margin: 0; padding: 0; box-sizing: border-box; }
+    .container { width: 100%; max-width: 860px; margin: 0; padding: 15px; box-sizing: border-box; background: #fff; border-radius: 8px; }
     h2 { color: #1e293b; margin-top: 0; }
     .nav-link { display: inline-block; margin-bottom: 20px; text-decoration: none; color: #3b82f6; font-weight: bold; border: 1px solid #3b82f6; padding: 6px 12px; border-radius: 4px; }
     .nav-link:hover { background: #eff6ff; }
@@ -73,9 +91,10 @@ $pageTitle = 'Pengaturan Telegram - ARA Hunter';
     .alert { padding: 10px; background: #dcfce7; color: #065f46; border-left: 4px solid #10b981; margin-bottom: 15px; }
   </style>
   <div class="container">
+      <?php if (!$isEmbedded): ?>
       <a href="ara_hunter.php" class="nav-link">← Kembali ke ARA Hunter</a>
-      
-      <h2>Pengaturan Penerima Notifikasi Telegram</h2>
+      <?php endif; ?>
+      <h2>📲 Pengaturan Penerima Notifikasi Telegram</h2>
       <p style="color:#64748b; font-size:14px;">Masukkan daftar akun telegram yang akan menerima update / alert bot secara otomatis. ID Telegram akan <strong>dienkripsi (AES-256)</strong> di dalam database sehingga tidak akan mudah disalahgunakan jika database bocor.</p>
       
       <?php if(isset($_GET['msg']) && $_GET['msg'] === 'success_add'): ?>
@@ -122,7 +141,7 @@ $pageTitle = 'Pengaturan Telegram - ARA Hunter';
                   <td><span class="badge-code"><?= $masked_view ?></span></td>
                   <td><span style="color:#10b981; font-weight:bold;">Aktif</span></td>
                   <td>
-                      <a href="telegram_setting.php?del=<?= $row['id'] ?>" class="btn-danger" onclick="return confirm('Yakin ingin menghapus <?php echo addslashes($row['name']); ?>?')">Del</a>
+                      <a href="telegram_setting.php?<?= $isEmbedded ? 'embed=1&' : '' ?>del=<?= $row['id'] ?>" class="btn-danger" onclick="return confirm('Yakin ingin menghapus <?php echo addslashes($row['name']); ?>?')">Del</a>
                   </td>
               </tr>
               <?php endwhile; ?>
@@ -137,4 +156,4 @@ $pageTitle = 'Pengaturan Telegram - ARA Hunter';
           </tbody>
       </table>
   </div>
-<?php include 'footer.php'; ?>
+<?php if (!$isEmbedded) include 'footer.php'; ?>

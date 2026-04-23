@@ -64,14 +64,14 @@ $pageTitle = 'Manual Scan BPJP & BSJP';
     <div class="grid-container" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
         <div class="card">
             <h3>BPJP (Scalping Pagi)</h3>
-            <p>Jadwal Buka: 08:50 - 09:00 WIB (Senin - Jumat)</p>
+            <p>Jadwal Buka: 08:50 - 09:05 WIB (Prime: 08:55 - 09:00, Senin - Jumat)</p>
             <button id="btn-bpjp" onclick="runScan('BPJP')" disabled>Jalankan Scan BPJP</button>
             <div id="status-bpjp" class="status">Tombol belum aktif</div>
         </div>
 
         <div class="card">
             <h3>BSJP (Swing Sore)</h3>
-            <p>Jadwal Buka: 15:30 - 16:00 WIB (Senin - Jumat)</p>
+            <p>Jadwal Buka: 15:45 - 16:00 WIB (Prime: 15:55 - 16:00, Senin - Jumat)</p>
             <button id="btn-bsjp" onclick="runScan('BSJP')" disabled>Jalankan Scan BSJP</button>
             <div id="status-bsjp" class="status">Tombol belum aktif</div>
         </div>
@@ -140,6 +140,34 @@ $pageTitle = 'Manual Scan BPJP & BSJP';
     </div>
 
     <script>
+        function isTimeBetween(time, start, end) {
+            return time >= start && time <= end;
+        }
+
+        function getWindowMode(type, timeCompare) {
+            if (type === 'BPJP') {
+                if (isTimeBetween(timeCompare, '08:55', '09:00')) return 'bpjp_prime_5m';
+                if (isTimeBetween(timeCompare, '08:50', '09:05')) return 'bpjp_open_15m';
+                return 'bpjp_outside';
+            }
+            if (type === 'BSJP') {
+                if (isTimeBetween(timeCompare, '15:55', '16:00')) return 'bsjp_prime_5m';
+                if (isTimeBetween(timeCompare, '15:45', '16:00')) return 'bsjp_open_15m';
+                return 'bsjp_outside';
+            }
+            return 'standard';
+        }
+
+        function triggerAutoSyncOnce(tag) {
+            const today = new Date().toISOString().split('T')[0];
+            const key = 'scan_sync_' + tag + '_' + today;
+            if (localStorage.getItem(key) === '1') return;
+
+            fetch('ajax_update.php')
+                .then(() => localStorage.setItem(key, '1'))
+                .catch(() => {});
+        }
+
         // Set zona waktu ke Asia/Jakarta
         function updateTime() {
             const now = new Date();
@@ -163,15 +191,22 @@ $pageTitle = 'Manual Scan BPJP & BSJP';
             const btnBsjp = document.getElementById('btn-bsjp');
             const statusBsjp = document.getElementById('status-bsjp');
 
+            const debugAlwaysOpen = new URLSearchParams(window.location.search).get('debug_time') === '1';
+            const isWeekday = (dayOfWeek >= 1 && dayOfWeek <= 5);
+            const isBpjpOpen = isTimeBetween(timeCompare, '08:50', '09:05');
+            const isBpjpPrime = isTimeBetween(timeCompare, '08:55', '09:00');
+            const isBsjpOpen = isTimeBetween(timeCompare, '15:45', '16:00');
+            const isBsjpPrime = isTimeBetween(timeCompare, '15:55', '16:00');
+
             // Cek apakah hari ini Senin - Jumat (1 - 5)
-            // SEMENTARA DIBUKA UNTUK UJI COBA (TIDAK ADA BATASAN HARI DAN JAM)
-            if (true) { // Aslinya: (dayOfWeek >= 1 && dayOfWeek <= 5)
-                
-                // Logika BPJP (08:50 - 09:00) 
-                // SEMENTARA DIBUKA
-                if (true) { // Aslinya: (timeCompare >= "08:50" && timeCompare <= "09:00")
+            if (isWeekday || debugAlwaysOpen) {
+
+                // Logika BPJP (08:50 - 09:05) dengan fokus 5 menit menjelang open
+                if (isBpjpOpen || debugAlwaysOpen) {
                     btnBpjp.disabled = false;
-                    statusBpjp.innerHTML = "Sesi BPJP Dibuka! Tombol Aktif. <span style='color:orange;'>(Mode Uji Coba)</span>";
+                    statusBpjp.innerHTML = isBpjpPrime
+                        ? "Sesi BPJP PRIME (08:55-09:00) aktif. Fokus kandidat volume tertinggi."
+                        : "Sesi BPJP 15 menit aktif (08:50-09:05).";
                     statusBpjp.className = "status active";
                 } else {
                     btnBpjp.disabled = true;
@@ -179,17 +214,23 @@ $pageTitle = 'Manual Scan BPJP & BSJP';
                     statusBpjp.className = "status";
                 }
 
-                // Logika BSJP (15:30 - 16:00)
-                // SEMENTARA DIBUKA
-                if (true) { // Aslinya: (timeCompare >= "15:30" && timeCompare <= "16:00")
+                // Logika BSJP (15:45 - 16:00) dengan fokus 5 menit menjelang close
+                if (isBsjpOpen || debugAlwaysOpen) {
                     btnBsjp.disabled = false;
-                    statusBsjp.innerHTML = "Sesi BSJP Dibuka! Tombol Aktif. <span style='color:orange;'>(Mode Uji Coba)</span>";
+                    statusBsjp.innerHTML = isBsjpPrime
+                        ? "Sesi BSJP PRIME (15:55-16:00) aktif. Prioritas momentum penutupan."
+                        : "Sesi BSJP 15 menit aktif (15:45-16:00).";
                     statusBsjp.className = "status active";
                 } else {
                     btnBsjp.disabled = true;
                     statusBsjp.innerText = "Di luar jam BSJP.";
                     statusBsjp.className = "status";
                 }
+
+                // Sinkronisasi data otomatis sekali per window agar data scanner lebih match terhadap sesi.
+                if (isBpjpPrime) triggerAutoSyncOnce('bpjp_prime_5m');
+                if (isBsjpOpen && !isBsjpPrime) triggerAutoSyncOnce('bsjp_open_15m');
+                if (isBsjpPrime) triggerAutoSyncOnce('bsjp_prime_5m');
             } else {
                 // Hari Libur
                 btnBpjp.disabled = true;
@@ -205,6 +246,9 @@ $pageTitle = 'Manual Scan BPJP & BSJP';
             let btnId = 'btn-' + type.toLowerCase();
             const btn = document.getElementById(btnId);
             const resultDiv = document.getElementById('result-container');
+            const now = new Date();
+            const timeCompare = now.toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour12: false, hour: '2-digit', minute: '2-digit' }).replace(/\./g, ':');
+            const windowMode = getWindowMode(type, timeCompare);
 
             // Ubah tombol sebentar jadi loading
             const originalText = btn.innerText;
@@ -212,10 +256,10 @@ $pageTitle = 'Manual Scan BPJP & BSJP';
 
             // Siapkan div hasil dengan pesan loading
             resultDiv.style.display = 'block';
-            resultDiv.innerHTML = "<p>Menganalisis Algoritma <b>" + type + "</b> (Proses Cepat di Database)...</p>";
+            resultDiv.innerHTML = "<p>Menganalisis Algoritma <b>" + type + "</b> (Window: <b>" + windowMode + "</b>)...</p>";
 
             // LANGSUNG eksekusi database tanpa nge-fetch sinkronisasi Live Yahoo yg bikin lama.
-            fetch('scan_bpjs_bsjp.php?tipe=' + type)
+            fetch('scan_bpjs_bsjp.php?tipe=' + type + '&window=' + encodeURIComponent(windowMode))
                 .then(response => response.text())
                 .then(data => {
                     resultDiv.innerHTML = data;

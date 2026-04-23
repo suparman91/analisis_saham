@@ -2,6 +2,14 @@
 require_once 'auth.php'; // Panggil session
 require_login();         // Wajib masuk
 
+$isEmbedded = isset($_GET['embed']) && $_GET['embed'] === '1';
+$portfolioManualUrl = static function (string $path) use ($isEmbedded): string {
+  if (!$isEmbedded) {
+    return $path;
+  }
+  return $path . (strpos($path, '?') === false ? '?' : '&') . 'embed=1';
+};
+
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/analyze.php';
 $mysqli = db_connect();
@@ -48,7 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // Redirect to clear POST
-    header("Location: portfolio_manual.php");
+    header("Location: " . $portfolioManualUrl("portfolio_manual.php"));
     exit;
 }
 

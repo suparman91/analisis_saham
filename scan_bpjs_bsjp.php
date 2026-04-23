@@ -4,6 +4,7 @@ require 'db.php'; // Pastikan koneksi DB tersedia dan variabelnya $conn atau $pd
 
 // Jika dipanggil via AJAX/Fetch dengan parameter `tipe`
 $tipe = isset($_GET['tipe']) ? $_GET['tipe'] : '';
+$window_mode = isset($_GET['window']) ? trim((string)$_GET['window']) : 'standard';
 
 if (!$tipe) {
     echo "Parameter tipe (BPJP/BSJP) tidak ditemukan.";
@@ -41,6 +42,41 @@ if (!$db_connection) {
 $sql_date = "SELECT MAX(date) as last_date FROM prices";
 $res_date = fetch_data($db_connection, $sql_date);
 $last_date = isset($res_date[0]['last_date']) ? $res_date[0]['last_date'] : null;
+
+$today = date('Y-m-d');
+$now_time = date('H:i:s');
+$day_of_week = (int)date('N');
+$is_trading_day = ($day_of_week >= 1 && $day_of_week <= 5);
+$is_pre_open = $is_trading_day && ($now_time < '09:00:00');
+
+// Jika pre-open atau data hari ini belum punya bar real (masih placeholder volume=0), pakai tanggal trading real terakhir.
+$target_date = $last_date;
+if ($last_date) {
+    $sql_real_today = "SELECT COUNT(*) as c FROM prices WHERE date = '" . addslashes($today) . "' AND volume > 0";
+    $real_today = fetch_data($db_connection, $sql_real_today);
+    $real_today_count = isset($real_today[0]['c']) ? (int)$real_today[0]['c'] : 0;
+
+    if ($is_pre_open || ($last_date === $today && $real_today_count < 50)) {
+        $sql_prev = "SELECT MAX(date) as prev_date FROM prices WHERE date < '" . addslashes($today) . "'";
+        $prev_date_row = fetch_data($db_connection, $sql_prev);
+        $prev_date = isset($prev_date_row[0]['prev_date']) ? $prev_date_row[0]['prev_date'] : null;
+        if (!empty($prev_date)) {
+            $target_date = $prev_date;
+        }
+    }
+}
+
+function inject_target_date($sql, $target_date) {
+    if (!$target_date) {
+        return $sql;
+    }
+    $cte = "WITH TargetDate AS ( SELECT '" . addslashes($target_date) . "' as last_date ),";
+    return str_replace("WITH TargetDate AS ( SELECT MAX(date) as last_date FROM prices ),", $cte, $sql);
+}
+
+if (!empty($target_date)) {
+    $last_date = $target_date;
+}
 
 if (!$last_date) {
     echo "<p style='color:red;'>Data harga saham tidak tersedia di database. Lakukan Fetch Real/EOD data ke DB terlebih dahulu.</p>";
@@ -81,6 +117,7 @@ if ($tipe === 'BPJP') {
       AND persen_kenaikan >= 1.5
         ORDER BY persen_kenaikan DESC";
 
+    $sql = inject_target_date($sql, $target_date);
     $results = fetch_data($db_connection, $sql);
 
 } elseif ($tipe === 'BSJP') {
@@ -114,6 +151,7 @@ if ($tipe === 'BPJP') {
       AND volume > 200000
       AND persen_kenaikan >= 1.0
         ORDER BY volume DESC";
+    $sql = inject_target_date($sql, $target_date);
     $results = fetch_data($db_connection, $sql);
 
 } elseif ($tipe === 'SWING') {
@@ -147,6 +185,7 @@ if ($tipe === 'BPJP') {
       AND close >= 50
       AND volume > 200000
         ORDER BY volume DESC";
+    $sql = inject_target_date($sql, $target_date);
     $results = fetch_data($db_connection, $sql);
 
         // Fallback: jika hasil terlalu sedikit, pakai filter lebih longgar
@@ -173,6 +212,7 @@ if ($tipe === 'BPJP') {
           AND close >= 50
           AND volume > 75000
                 ORDER BY persen_kenaikan DESC, volume DESC";
+        $sql_fallback = inject_target_date($sql_fallback, $target_date);
         $results = fetch_data($db_connection, $sql_fallback);
 
         // Fallback level 2: kalau masih sedikit, gunakan mode watchlist (kandidat uptrend awal)
@@ -201,6 +241,7 @@ if ($tipe === 'BPJP') {
               AND close >= 50
               AND volume > 50000
             ORDER BY (close / NULLIF(ma20,0)) DESC, volume DESC";
+            $sql_fallback2 = inject_target_date($sql_fallback2, $target_date);
             $results = fetch_data($db_connection, $sql_fallback2);
         }
     }
@@ -234,6 +275,7 @@ if ($tipe === 'BPJP') {
       AND volume > 150000
       AND (avg_vol_10 IS NULL OR volume >= avg_vol_10 * 1.2)
     ORDER BY close_strength DESC, volume DESC";
+    $sql = inject_target_date($sql, $target_date);
     $results = fetch_data($db_connection, $sql);
 
     if (count($results) === 0) {
@@ -263,6 +305,7 @@ if ($tipe === 'BPJP') {
           AND close_strength >= 60
           AND volume > 100000
         ORDER BY close_strength DESC, persen_kenaikan DESC, volume DESC";
+        $sql_fallback = inject_target_date($sql_fallback, $target_date);
         $results = fetch_data($db_connection, $sql_fallback);
     }
 }
@@ -689,6 +732,10 @@ if (count($results) > 0) {
     });
 
     echo "<h3>Hasil Scan $tipe (Berdasarkan Data: $last_date)</h3>";
+    if ($tipe === 'BPJP' || $tipe === 'BSJP') {
+        $window_safe = htmlspecialchars($window_mode, ENT_QUOTES, 'UTF-8');
+        echo "<p style='margin:6px 0 12px 0; color:#475569; font-size:12px;'>Window scan: <b>{$window_safe}</b>. Catatan: Yahoo API cenderung delay, jadi sesi BPJP/BSJP lebih aman dianggap sebagai <b>preparation signal</b>, bukan tick-by-tick realtime.</p>";
+    }
     echo "<div style='overflow-x:auto;'>";
     echo "<table border='1' cellpadding='8' cellspacing='0' style='width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; min-width: 800px;'>";
     echo "<tr style='background-color:#f2f2f2;'>

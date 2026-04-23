@@ -47,7 +47,9 @@ function auto_fetch_fundamentals($symbol) {
 require_once __DIR__ . '/db.php';
 
 function fetch_prices($mysqli, $symbol, $limit = 500) {
-    $stmt = $mysqli->prepare('SELECT date, open, high, low, close, volume FROM prices WHERE symbol=? ORDER BY date ASC LIMIT ?');
+    // Ambil data terbaru dulu agar scanner/analisa tidak terpaku pada data lama.
+    // Setelah itu dibalik lagi ke urutan ASC supaya kalkulasi indikator tetap konsisten.
+    $stmt = $mysqli->prepare('SELECT date, open, high, low, close, volume FROM prices WHERE symbol=? ORDER BY date DESC LIMIT ?');
     $stmt->bind_param('si', $symbol, $limit);
     $stmt->execute();
     $res = $stmt->get_result();
@@ -62,7 +64,7 @@ function fetch_prices($mysqli, $symbol, $limit = 500) {
             'volume' => (int)$r['volume']
         ];
     }
-    return $arr;
+    return array_reverse($arr);
 }
 
 function auto_fetch_history($mysqli, $symbol) {
