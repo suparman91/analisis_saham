@@ -8,8 +8,57 @@ $mysqli = db_connect();
 $user_id = get_user_id();
 $isEmbedded = isset($_GET['embed']) && $_GET['embed'] === '1';
 
-// Fetch User Info
-$stmt = $mysqli->prepare("SELECT id, username, email, subscription_end, created_at, robo_capital, robo_balance FROM users WHERE id = ?");
+// Fetch User Info (adaptif untuk skema users lama/baru)
+$hasName = false;
+$hasEmail = false;
+$hasSubscriptionEnd = false;
+$hasCreatedAt = false;
+$hasRoboCapital = false;
+$hasRoboBalance = false;
+
+$colName = $mysqli->query("SHOW COLUMNS FROM users LIKE 'name'");
+if ($colName && $colName->num_rows > 0) {
+    $hasName = true;
+}
+
+$colEmail = $mysqli->query("SHOW COLUMNS FROM users LIKE 'email'");
+if ($colEmail && $colEmail->num_rows > 0) {
+    $hasEmail = true;
+}
+
+$colSubscriptionEnd = $mysqli->query("SHOW COLUMNS FROM users LIKE 'subscription_end'");
+if ($colSubscriptionEnd && $colSubscriptionEnd->num_rows > 0) {
+    $hasSubscriptionEnd = true;
+}
+
+$colCreatedAt = $mysqli->query("SHOW COLUMNS FROM users LIKE 'created_at'");
+if ($colCreatedAt && $colCreatedAt->num_rows > 0) {
+    $hasCreatedAt = true;
+}
+
+$colRoboCapital = $mysqli->query("SHOW COLUMNS FROM users LIKE 'robo_capital'");
+if ($colRoboCapital && $colRoboCapital->num_rows > 0) {
+    $hasRoboCapital = true;
+}
+
+$colRoboBalance = $mysqli->query("SHOW COLUMNS FROM users LIKE 'robo_balance'");
+if ($colRoboBalance && $colRoboBalance->num_rows > 0) {
+    $hasRoboBalance = true;
+}
+
+$selectFields = "id";
+$selectFields .= $hasName ? ", name as username" : ", '' as username";
+$selectFields .= $hasEmail ? ", email" : ", '' as email";
+$selectFields .= $hasSubscriptionEnd ? ", subscription_end" : ", NULL as subscription_end";
+$selectFields .= $hasCreatedAt ? ", created_at" : ", NOW() as created_at";
+$selectFields .= $hasRoboCapital ? ", robo_capital" : ", 0 as robo_capital";
+$selectFields .= $hasRoboBalance ? ", robo_balance" : ", 0 as robo_balance";
+
+$stmt = $mysqli->prepare("SELECT $selectFields FROM users WHERE id = ?");
+if (!$stmt) {
+    die("Gagal memuat data user: " . htmlspecialchars($mysqli->error));
+}
+
 $stmt->bind_param('i', $user_id);
 $stmt->execute();
 $user = $stmt->get_result()->fetch_assoc();
@@ -45,11 +94,11 @@ if ($subscription_active && $subscription_end) {
 
 // Fetch watchlist count
 $wl_res = $mysqli->query("SELECT COUNT(*) as total FROM watchlist WHERE user_id = $user_id");
-$wl_count = $wl_res->fetch_assoc()['total'];
+$wl_count = $wl_res ? (int)$wl_res->fetch_assoc()['total'] : 0;
 
 // Fetch telegram subscribers count
 $tg_res = $mysqli->query("SELECT COUNT(*) as total FROM telegram_subscribers WHERE user_id = $user_id");
-$tg_count = $tg_res->fetch_assoc()['total'];
+$tg_count = $tg_res ? (int)$tg_res->fetch_assoc()['total'] : 0;
 
 // Handle password change
 $pwd_msg = '';
@@ -60,27 +109,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     
     // Verify current password
     $pwd_stmt = $mysqli->prepare("SELECT password FROM users WHERE id = ?");
+    if (!$pwd_stmt) {
+        $pwd_msg = '<div class="alert error">❌ Gagal memproses perubahan password</div>';
+    } else {
     $pwd_stmt->bind_param('i', $user_id);
     $pwd_stmt->execute();
     $pwd_row = $pwd_stmt->get_result()->fetch_assoc();
     $pwd_stmt->close();
     
-    if (password_verify($current_pwd, $pwd_row['password'])) {
+    if (!empty($pwd_row['password']) && password_verify($current_pwd, $pwd_row['password'])) {
         if ($new_pwd === $confirm_pwd && strlen($new_pwd) >= 6) {
             $hashed = password_hash($new_pwd, PASSWORD_BCRYPT);
             $update_stmt = $mysqli->prepare("UPDATE users SET password = ? WHERE id = ?");
-            $update_stmt->bind_param('si', $hashed, $user_id);
-            if ($update_stmt->execute()) {
-                $pwd_msg = '<div class="alert success">✅ Password berhasil diubah</div>';
+            if ($update_stmt) {
+                $update_stmt->bind_param('si', $hashed, $user_id);
+                if ($update_stmt->execute()) {
+                    $pwd_msg = '<div class="alert success">✅ Password berhasil diubah</div>';
+                } else {
+                    $pwd_msg = '<div class="alert error">❌ Gagal mengubah password</div>';
+                }
+                $update_stmt->close();
             } else {
                 $pwd_msg = '<div class="alert error">❌ Gagal mengubah password</div>';
             }
-            $update_stmt->close();
         } else {
             $pwd_msg = '<div class="alert error">❌ Password baru harus sama dan minimal 6 karakter</div>';
         }
     } else {
         $pwd_msg = '<div class="alert error">❌ Password saat ini salah</div>';
+    }
     }
 }
 ?>

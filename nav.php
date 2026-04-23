@@ -244,6 +244,7 @@ if ($currentPage === 'app.php' && isset($_GET['page'])) {
             <div class="bnav-dropdown-content" style="right:0; left:auto; min-width:180px;">
               <a href="app.php?page=admin.php">&#x1F465; Manage Users</a>
               <a href="app.php?page=admin_manual.php">&#x1F4B3; Manual Langganan</a>
+              <a href="app.php?page=scan_retention_settings.php">&#x1F5C3; Retensi Riwayat Scan</a>
             </div>
           </div>
         <?php endif; ?>

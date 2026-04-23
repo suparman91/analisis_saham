@@ -28,7 +28,8 @@ $allowedPages = [
     'user_settings.php',
     'subscribe.php',
     'admin.php',
-    'admin_manual.php'
+    'admin_manual.php',
+    'scan_retention_settings.php'
 ];
 
 $page = basename((string)($_GET['page'] ?? 'index.php'));
@@ -233,7 +234,7 @@ $contentSrc = $page . '?embed=1';
 
           const url = new URL(raw, window.location.origin);
           const path = (url.pathname.split('/').pop() || '').toLowerCase();
-          const allowed = ['index.php','ihsg.php','chart.php','scan_ta.php','scan_manual.php','ara_hunter.php','arb_hunter.php','portfolio.php','portfolio_manual.php','telegram_setting.php','user_settings.php','subscribe.php','admin.php','admin_manual.php'];
+          const allowed = ['index.php','ihsg.php','chart.php','scan_ta.php','scan_manual.php','ara_hunter.php','arb_hunter.php','portfolio.php','portfolio_manual.php','telegram_setting.php','user_settings.php','subscribe.php','admin.php','admin_manual.php','scan_retention_settings.php'];
           if (!allowed.includes(path)) {
             return;
           }
