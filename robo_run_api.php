@@ -169,7 +169,7 @@ if ($balance > 1000000) {
 				$score += min(25, max(0, ($volRatio - 1.5) * 20));
 				$score += min(10, max(0, $smaSpreadPct * 2));
 				$score += min(10, max(0, $ret5));
-				$score = (int)max(0, min(99, round($score));
+				$score = (int)max(0, min(99, round($score)));
 				$buyCandidates[] = [
 					'symbol' => $sym,
 					'price' => $currPrice,

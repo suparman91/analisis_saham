@@ -1,3 +1,4 @@
+<?php
 // Fungsi cek jam bursa BEI
 function is_bursa_open() {
     $now = new DateTime('now', new DateTimeZone('Asia/Jakarta'));
@@ -11,7 +12,7 @@ function is_bursa_open() {
     }
     return false; // Sabtu/Minggu
 }
-<?php
+
 require_once __DIR__ . '/auth.php';
 require_login();
 
@@ -71,6 +72,31 @@ function getRealtimePriceYahoo($symbol) {
     return $price;
 }
 
+function beiTickSize($price) {
+    $p = (float)$price;
+    if ($p < 200) return 1;
+    if ($p < 500) return 2;
+    if ($p < 2000) return 5;
+    if ($p < 5000) return 10;
+    return 25;
+}
+
+function roundToBeiTick($price) {
+    $tick = beiTickSize($price);
+    return round(((float)$price) / $tick) * $tick;
+}
+
+function isRealtimePriceValid($rtPrice, $dbClose) {
+    $rt = (float)$rtPrice;
+    $db = (float)$dbClose;
+    if ($rt <= 0 || $db <= 0) {
+        return false;
+    }
+    $diff = abs($rt - $db) / $db;
+    // Toleransi 35% agar lonjakan ekstrem/salah feed tidak dipakai.
+    return $diff <= 0.35;
+}
+
 // Validate user & current balance
 $resUser = $mysqli->query("SELECT id, email, robo_balance FROM users WHERE id = {$user_id} LIMIT 1");
 if (!$resUser || $resUser->num_rows === 0) {
@@ -92,9 +118,25 @@ while ($open && ($t = $open->fetch_assoc())) {
 
     $latest = $prices[count($prices) - 1];
     $dbClose = (float)$latest['close'];
-    $currPrice = getRealtimePriceYahoo($sym);
+
+    // Koreksi 1x untuk harga beli anomali hasil serok sebelumnya: kembalikan ke referensi DB terakhir.
+    $buyReasonNow = isset($t['buy_reason']) ? (string)$t['buy_reason'] : '';
+    if ($dbClose > 0 && stripos($buyReasonNow, 'Serok') !== false) {
+        $anomDiff = abs($buyPrice - $dbClose) / $dbClose;
+        if ($anomDiff > 0.35) {
+            $tidFix = (int)$t['id'];
+            $fixPrice = roundToBeiTick($dbClose);
+            $mysqli->query("UPDATE robo_trades SET buy_price={$fixPrice} WHERE id={$tidFix} AND user_id={$user_id}");
+            $buyPrice = $fixPrice;
+            $actions[] = 'FIX BUY ' . $sym . ' (anomali->' . $fixPrice . ')';
+        }
+    }
+
+    $rtPrice = getRealtimePriceYahoo($sym);
+    $isRtValid = isRealtimePriceValid($rtPrice, $dbClose);
+    $currPrice = $isRtValid ? (float)$rtPrice : $dbClose;
     if ($currPrice <= 0) {
-        $currPrice = $dbClose;
+        continue;
     }
     $sellDate = date('Y-m-d');
 
@@ -102,22 +144,23 @@ while ($open && ($t = $open->fetch_assoc())) {
     $sell = false;
     $reason = '';
 
-    // Auto-serok: jika turun >5% dari harga beli, lakukan averaging down jika ada cash cukup
-    if ($pct <= -0.05 && $balance > 1000000) {
-        $lots_serok = (int)floor(min($balance, 3000000) / ($currPrice * 100)); // max 3jt per serok
+    // Auto-serok: wajib pakai harga realtime valid, jangan fallback ke DB close.
+    $serokPct = $isRtValid ? (($rtPrice - $buyPrice) / $buyPrice) : 0;
+    if ($isRtValid && $serokPct <= -0.05 && $balance > 1000000) {
+        $lots_serok = (int)floor(min($balance, 3000000) / ($rtPrice * 100)); // max 3jt per serok
         if ($lots_serok > 0) {
-            $buyValue = $lots_serok * 100 * $currPrice;
-            $symEsc = $mysqli->real_escape_string($sym);
+            $buyValue = $lots_serok * 100 * $rtPrice;
             $reasonSerok = 'Averaging Down (Serok AI)';
-            $reasonEsc = $mysqli->real_escape_string($reasonSerok);
-            $buyDate = date('Y-m-d');
+            $reasonCombined = trim(($buyReasonNow !== '' ? $buyReasonNow . ' | ' : '') . $reasonSerok . ' @' . round($rtPrice, 2));
+            $reasonEsc = $mysqli->real_escape_string($reasonCombined);
             // Hitung harga rata-rata baru dan lot baru
             $old_lots = (int)$t['lots'];
             $old_price = (float)$t['buy_price'];
             $new_lots = $old_lots + $lots_serok;
-            $new_avg_price = (($old_price * $old_lots) + ($currPrice * $lots_serok)) / $new_lots;
-            // Update posisi lama (lot, harga rata-rata, tanggal beli, alasan)
-            $mysqli->query("UPDATE robo_trades SET buy_price={$new_avg_price}, lots={$new_lots}, buy_date='{$buyDate}', buy_reason='{$reasonEsc}' WHERE id=" . (int)$t['id']);
+            $new_avg_price = (($old_price * $old_lots) + ($rtPrice * $lots_serok)) / $new_lots;
+            $new_avg_price = roundToBeiTick($new_avg_price);
+            // Update posisi lama (lot, harga rata-rata, alasan). buy_date tidak diubah.
+            $mysqli->query("UPDATE robo_trades SET buy_price={$new_avg_price}, lots={$new_lots}, buy_reason='{$reasonEsc}' WHERE id=" . (int)$t['id']);
             $mysqli->query("UPDATE users SET robo_balance = robo_balance - {$buyValue} WHERE id = {$user_id}");
             $balance -= $buyValue;
             $actions[] = 'SEROK ' . $sym . ' (' . $lots_serok . ' lot, avg: ' . round($new_avg_price,2) . ')';
@@ -126,7 +169,9 @@ while ($open && ($t = $open->fetch_assoc())) {
             if ($log_stmt) {
                 $log_action = 'SEROK';
                 $log_reason = $reasonSerok;
-                $log_stmt->bind_param("issdis", $user_id, $sym, $log_action, $currPrice, $lots_serok, $log_reason);
+                $log_price = (float)$rtPrice;
+                $log_lots = (int)$lots_serok;
+                $log_stmt->bind_param("issdis", $user_id, $sym, $log_action, $log_price, $log_lots, $log_reason);
                 $log_stmt->execute();
             } else {
                 error_log('Prepare failed (SEROK): ' . $mysqli->error);
@@ -144,8 +189,8 @@ while ($open && ($t = $open->fetch_assoc())) {
     }
 
     if ($sell) {
+        $lots = (int)$t['lots'];
         if (is_bursa_open()) {
-            $lots = (int)$t['lots'];
             $tid = (int)$t['id'];
             $pl = ($currPrice - $buyPrice) * ($lots * 100);
             $value = $currPrice * $lots * 100;
@@ -198,6 +243,9 @@ if ($balance > 1000000) {
 
         $buyCandidates = [];
         foreach ($symbols as $sym) {
+            if (strtoupper(substr((string)$sym, -3)) !== '.JK') {
+                continue;
+            }
             $symEsc = $mysqli->real_escape_string($sym);
             $cek = $mysqli->query("SELECT id FROM robo_trades WHERE symbol='{$symEsc}' AND status='OPEN' AND user_id={$user_id}");
             if ($cek && $cek->num_rows > 0) {
@@ -275,9 +323,12 @@ if ($balance > 1000000) {
                 // Audit log SKIP
                 $log_stmt = $mysqli->prepare("INSERT INTO robo_audit_log (user_id, symbol, action, price, lots, reason) VALUES (?, ?, ?, ?, ?, ?)");
                 if ($log_stmt) {
+                    $log_symbol = $cand['symbol'];
                     $log_action = 'SKIP';
+                    $log_price = 0.0;
+                    $log_lots = 0;
                     $log_reason = 'Harga real-time tidak tersedia';
-                    $log_stmt->bind_param("issdis", $user_id, $cand['symbol'], $log_action, 0, 0, $log_reason);
+                    $log_stmt->bind_param("issdis", $user_id, $log_symbol, $log_action, $log_price, $log_lots, $log_reason);
                     $log_stmt->execute();
                 } else {
                     error_log('Prepare failed (SKIP): ' . $mysqli->error);
@@ -300,9 +351,12 @@ if ($balance > 1000000) {
             // Audit log BUY
             $log_stmt = $mysqli->prepare("INSERT INTO robo_audit_log (user_id, symbol, action, price, lots, reason) VALUES (?, ?, ?, ?, ?, ?)");
             if ($log_stmt) {
+                $log_symbol = $cand['symbol'];
                 $log_action = 'BUY';
+                $log_price = $buyPrice;
+                $log_lots = $lots;
                 $log_reason = $reason;
-                $log_stmt->bind_param("issdis", $user_id, $cand['symbol'], $log_action, $buyPrice, $lots, $log_reason);
+                $log_stmt->bind_param("issdis", $user_id, $log_symbol, $log_action, $log_price, $log_lots, $log_reason);
                 $log_stmt->execute();
             } else {
                 error_log('Prepare failed (BUY): ' . $mysqli->error);

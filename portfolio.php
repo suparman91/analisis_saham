@@ -192,6 +192,152 @@ $closed = [];
 $res_closed = $mysqli->query("SELECT * FROM robo_trades WHERE status='CLOSED' AND user_id = $user_id ORDER BY sell_date DESC LIMIT 50");
 if ($res_closed) { while ($r = $res_closed->fetch_assoc()) $closed[] = $r; }
 
+$ledger_date = isset($_GET['ledger_date']) ? trim((string)$_GET['ledger_date']) : date('Y-m-d');
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $ledger_date)) {
+    $ledger_date = date('Y-m-d');
+}
+
+$ledger_action = isset($_GET['ledger_action']) ? strtoupper(trim((string)$_GET['ledger_action'])) : 'ALL';
+$allowed_ledger_actions = ['ALL', 'BUY', 'SELL', 'SEROK', 'SKIP', 'SKIP_SELL'];
+if (!in_array($ledger_action, $allowed_ledger_actions, true)) {
+    $ledger_action = 'ALL';
+}
+
+$ledger_symbol = isset($_GET['ledger_symbol']) ? strtoupper(trim((string)$_GET['ledger_symbol'])) : '';
+if ($ledger_symbol !== '' && !preg_match('/^[A-Z0-9\.]+$/', $ledger_symbol)) {
+    $ledger_symbol = '';
+}
+
+$ledger_date_esc = $mysqli->real_escape_string($ledger_date);
+$ledger_action_sql = '';
+if ($ledger_action !== 'ALL') {
+    if ($ledger_action === 'SKIP') {
+        $ledger_action_sql = " AND action LIKE 'SKIP%' ";
+    } else {
+        $ledger_action_esc = $mysqli->real_escape_string($ledger_action);
+        $ledger_action_sql = " AND action = '{$ledger_action_esc}' ";
+    }
+}
+$ledger_symbol_sql = '';
+if ($ledger_symbol !== '') {
+        $ledger_symbol_esc = $mysqli->real_escape_string($ledger_symbol);
+        $ledger_symbol_sql = " AND symbol = '{$ledger_symbol_esc}' ";
+}
+
+$ledger_where_sql = "
+    WHERE user_id = {$user_id}
+      AND DATE(created_at) = '{$ledger_date_esc}'
+      {$ledger_action_sql}
+      {$ledger_symbol_sql}
+";
+
+$ledger_page = isset($_GET['ledger_page']) ? (int)$_GET['ledger_page'] : 1;
+if ($ledger_page < 1) {
+    $ledger_page = 1;
+}
+$ledger_per_page = 50;
+$ledger_total_rows = 0;
+$ledger_count_sql = "SELECT COUNT(*) AS total FROM robo_audit_log {$ledger_where_sql}";
+$res_ledger_count = $mysqli->query($ledger_count_sql);
+if ($res_ledger_count) {
+    $ledger_total_rows = (int)$res_ledger_count->fetch_assoc()['total'];
+}
+
+$ledger_total_pages = max(1, (int)ceil($ledger_total_rows / $ledger_per_page));
+if ($ledger_page > $ledger_total_pages) {
+    $ledger_page = $ledger_total_pages;
+}
+$ledger_offset = ($ledger_page - 1) * $ledger_per_page;
+
+$ledger_rows = [];
+$ledger_sql = "
+    SELECT created_at, symbol, action, price, lots, reason
+    FROM robo_audit_log
+    {$ledger_where_sql}
+    ORDER BY created_at DESC
+    LIMIT {$ledger_per_page} OFFSET {$ledger_offset}
+";
+$res_ledger = $mysqli->query($ledger_sql);
+if ($res_ledger) {
+    while ($r = $res_ledger->fetch_assoc()) {
+        $ledger_rows[] = $r;
+    }
+}
+
+$ledger_export_rows = [];
+$ledger_export_sql = "
+    SELECT created_at, symbol, action, price, lots, reason
+    FROM robo_audit_log
+    {$ledger_where_sql}
+    ORDER BY created_at DESC
+";
+$res_ledger_export = $mysqli->query($ledger_export_sql);
+if ($res_ledger_export) {
+    while ($r = $res_ledger_export->fetch_assoc()) {
+        $ledger_export_rows[] = $r;
+    }
+}
+
+$ledger_summary = [
+    'BUY' => ['count' => 0, 'value' => 0],
+    'SELL' => ['count' => 0, 'value' => 0],
+    'SEROK' => ['count' => 0, 'value' => 0],
+    'SKIP' => ['count' => 0, 'value' => 0],
+    'NET' => 0,
+];
+foreach ($ledger_export_rows as $row) {
+    $action = strtoupper((string)$row['action']);
+    $price = isset($row['price']) ? (float)$row['price'] : 0;
+    $lots = isset($row['lots']) ? (int)$row['lots'] : 0;
+    $value = ($price > 0 && $lots > 0) ? $price * $lots * 100 : 0;
+
+    if ($action === 'BUY' || $action === 'SELL' || $action === 'SEROK') {
+        $ledger_summary[$action]['count']++;
+        $ledger_summary[$action]['value'] += $value;
+        if ($action === 'SELL') {
+            $ledger_summary['NET'] += $value;
+        } else {
+            $ledger_summary['NET'] -= $value;
+        }
+    } elseif (strpos($action, 'SKIP') === 0) {
+        $ledger_summary['SKIP']['count']++;
+        $ledger_summary['SKIP']['value'] += $value;
+    }
+}
+
+if (isset($_GET['export_ledger']) && $_GET['export_ledger'] === '1') {
+    $csvDate = preg_replace('/[^0-9\-]/', '', $ledger_date);
+    $csvAction = $ledger_action !== 'ALL' ? $ledger_action : 'ALL';
+    $csvSymbol = $ledger_symbol !== '' ? $ledger_symbol : 'ALL';
+    $csvFilename = 'ledger_robo_' . $csvDate . '_' . $csvAction . '_' . preg_replace('/[^A-Z0-9\.]/', '', $csvSymbol) . '.csv';
+
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename=' . $csvFilename);
+
+    $output = fopen('php://output', 'w');
+    if ($output) {
+        fputs($output, "\xEF\xBB\xBF");
+        fputcsv($output, ['Tanggal', 'Waktu', 'Ticker', 'Aksi', 'Harga', 'Lot', 'Value', 'Keterangan']);
+        foreach ($ledger_export_rows as $row) {
+            $price = isset($row['price']) ? (float)$row['price'] : 0;
+            $lots = isset($row['lots']) ? (int)$row['lots'] : 0;
+            $value = ($price > 0 && $lots > 0) ? $price * $lots * 100 : 0;
+            fputcsv($output, [
+                date('Y-m-d', strtotime($row['created_at'])),
+                date('H:i:s', strtotime($row['created_at'])),
+                $row['symbol'],
+                strtoupper((string)$row['action']),
+                $price,
+                $lots,
+                $value,
+                (string)$row['reason'],
+            ]);
+        }
+        fclose($output);
+    }
+    exit;
+}
+
 $total_pl = 0;
 $win = 0;
 $loss = 0;
@@ -658,40 +804,115 @@ setInterval(function() {
 </div>
 
 <div class="tbl-container" style="border-top: 4px solid #94a3b8;">
-    <div class="tbl-header">Riwayat Transaksi (LEDGER HISTORY)</div>
+    <div class="tbl-header" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <span>Riwayat Transaksi (LEDGER HISTORY)</span>
+        <form method="get" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0;">
+            <input type="hidden" name="robo_run" value="ok">
+            <input type="hidden" name="msg" value="Filter riwayat transaksi diterapkan.">
+            <label for="ledger_date" style="font-size:12px; color:#475569;">Tanggal:</label>
+            <input id="ledger_date" name="ledger_date" type="date" value="<?= htmlspecialchars($ledger_date) ?>" style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px;">
+            <label for="ledger_action" style="font-size:12px; color:#475569;">Aksi:</label>
+            <select id="ledger_action" name="ledger_action" style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px;">
+                <option value="ALL" <?= $ledger_action === 'ALL' ? 'selected' : '' ?>>Semua</option>
+                <option value="BUY" <?= $ledger_action === 'BUY' ? 'selected' : '' ?>>BUY</option>
+                <option value="SELL" <?= $ledger_action === 'SELL' ? 'selected' : '' ?>>SELL</option>
+                <option value="SEROK" <?= $ledger_action === 'SEROK' ? 'selected' : '' ?>>SEROK</option>
+                <option value="SKIP" <?= $ledger_action === 'SKIP' ? 'selected' : '' ?>>SKIP</option>
+            </select>
+            <label for="ledger_symbol" style="font-size:12px; color:#475569;">Ticker:</label>
+            <input id="ledger_symbol" name="ledger_symbol" type="text" value="<?= htmlspecialchars($ledger_symbol) ?>" placeholder="Mis: PPRE.JK" style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; width:110px; text-transform:uppercase;">
+            <button type="submit" style="padding:6px 12px; background:#0d6efd; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; font-weight:bold;">Tampilkan</button>
+            <button type="submit" name="export_ledger" value="1" style="padding:6px 12px; background:#16a34a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; font-weight:bold;">Export CSV</button>
+            <a href="portfolio.php?robo_run=ok&msg=Filter%20ledger%20direset.&ledger_date=<?= urlencode(date('Y-m-d')) ?>" style="padding:6px 12px; background:#e2e8f0; color:#334155; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold;">Reset Filter</a>
+        </form>
+    </div>
+    <div style="padding:10px 20px; font-size:12px; color:#475569; border-bottom:1px solid #e2e8f0; background:#f8fafc;">
+        Default hanya menampilkan transaksi pada tanggal yang dipilih. Riwayat ini mencakup BUY, SELL, SEROK, dan aksi robot lain pada hari tersebut. Total data: <b><?= number_format($ledger_total_rows, 0, ',', '.') ?></b> baris.
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; padding:12px 20px; border-bottom:1px solid #e2e8f0; background:#fff;">
+        <div style="border:1px solid #dbeafe; background:#eff6ff; border-radius:8px; padding:10px 12px;">
+            <div style="font-size:11px; color:#475569;">BUY</div>
+            <div style="font-weight:bold; color:#1d4ed8;"><?= $ledger_summary['BUY']['count'] ?> transaksi</div>
+            <div style="font-size:12px; color:#334155;">Rp <?= number_format($ledger_summary['BUY']['value'], 0, ',', '.') ?></div>
+        </div>
+        <div style="border:1px solid #dcfce7; background:#f0fdf4; border-radius:8px; padding:10px 12px;">
+            <div style="font-size:11px; color:#475569;">SELL</div>
+            <div style="font-weight:bold; color:#15803d;"><?= $ledger_summary['SELL']['count'] ?> transaksi</div>
+            <div style="font-size:12px; color:#334155;">Rp <?= number_format($ledger_summary['SELL']['value'], 0, ',', '.') ?></div>
+        </div>
+        <div style="border:1px solid #fef3c7; background:#fffbeb; border-radius:8px; padding:10px 12px;">
+            <div style="font-size:11px; color:#475569;">SEROK</div>
+            <div style="font-weight:bold; color:#b45309;"><?= $ledger_summary['SEROK']['count'] ?> transaksi</div>
+            <div style="font-size:12px; color:#334155;">Rp <?= number_format($ledger_summary['SEROK']['value'], 0, ',', '.') ?></div>
+        </div>
+        <div style="border:1px solid #e5e7eb; background:#f8fafc; border-radius:8px; padding:10px 12px;">
+            <div style="font-size:11px; color:#475569;">SKIP</div>
+            <div style="font-weight:bold; color:#475569;"><?= $ledger_summary['SKIP']['count'] ?> aksi</div>
+            <div style="font-size:12px; color:#334155;">Rp <?= number_format($ledger_summary['SKIP']['value'], 0, ',', '.') ?></div>
+        </div>
+        <div style="border:1px solid <?= $ledger_summary['NET'] >= 0 ? '#dcfce7' : '#fee2e2' ?>; background:<?= $ledger_summary['NET'] >= 0 ? '#f0fdf4' : '#fef2f2' ?>; border-radius:8px; padding:10px 12px;">
+            <div style="font-size:11px; color:#475569;">NET BUY/SELL</div>
+            <div style="font-weight:bold; color:<?= $ledger_summary['NET'] >= 0 ? '#15803d' : '#b91c1c' ?>;"><?= $ledger_summary['NET'] >= 0 ? 'NET SELL' : 'NET BUY' ?></div>
+            <div style="font-size:12px; color:#334155;">Rp <?= number_format(abs($ledger_summary['NET']), 0, ',', '.') ?></div>
+        </div>
+    </div>
     <table>
         <thead>
             <tr>
+                <th>Waktu</th>
                 <th>Ticker</th>
-                <th>Tgl Beli</th>
-                <th>Tgl Jual</th>
-                <th>Avg. Buy</th>
-                <th>Avg. Sell</th>
-                <th>Status (Rules)</th>
-                <th>P/L Realized (Rp)</th>
+                <th>Aksi</th>
+                <th>Harga</th>
+                <th>Lot</th>
+                <th>Value</th>
+                <th>Keterangan</th>
             </tr>
         </thead>
         <tbody>
-            <?php if (count($closed) == 0): ?>
-            <tr><td colspan="7" style="text-align:center; padding: 20px; color:#94a3b8;">Belum ada history jual.</td></tr>
+            <?php if (count($ledger_rows) == 0): ?>
+            <tr><td colspan="7" style="text-align:center; padding: 20px; color:#94a3b8;">Belum ada riwayat transaksi pada tanggal <?= htmlspecialchars($ledger_date) ?>.</td></tr>
             <?php else: ?>
-                <?php foreach ($closed as $o): ?>
+                <?php foreach ($ledger_rows as $row): ?>
+                <?php
+                    $action = strtoupper((string)$row['action']);
+                    $price = isset($row['price']) ? (float)$row['price'] : 0;
+                    $lots = isset($row['lots']) ? (int)$row['lots'] : 0;
+                    $value = $price > 0 && $lots > 0 ? $price * $lots * 100 : 0;
+                    $badge_cls = 'bg-gray';
+                    if ($action === 'BUY') $badge_cls = 'bg-blue';
+                    elseif ($action === 'SEROK') $badge_cls = 'bg-orange';
+                    elseif ($action === 'SELL') $badge_cls = 'bg-green';
+                    elseif ($action === 'SKIP_SELL') $badge_cls = 'bg-red';
+                    elseif (strpos($action, 'SKIP') !== false) $badge_cls = 'bg-gray';
+                ?>
                 <tr>
-                    <td><b><?= $o['symbol'] ?></b></td>
-                    <td><?= $o['buy_date'] ?></td>
-                    <td><?= $o['sell_date'] ?></td>
-                    <td>Rp <?= number_format($o['buy_price'], 0, ',', '.') ?></td>
-                    <td>Rp <?= number_format($o['sell_price'], 0, ',', '.') ?></td>
-                    <td><span class="badge <?= strpos($o['sell_reason'], 'Profit') !== false ? 'bg-green' : 'bg-red' ?>"><?= htmlspecialchars($o['sell_reason']) ?></span></td>
-                    <td class="<?= $o['profit_loss_rp'] >= 0 ? 'text-green' : 'text-red' ?>">
-                        <?= $o['profit_loss_rp'] > 0 ? '+' : '' ?>Rp <?= number_format($o['profit_loss_rp'], 0, ',', '.') ?> 
-                        (<?= $o['profit_loss_pct'] ?>%)
-                    </td>
+                    <td><?= htmlspecialchars(date('H:i:s', strtotime($row['created_at']))) ?></td>
+                    <td><b><?= htmlspecialchars($row['symbol']) ?></b></td>
+                    <td><span class="badge <?= $badge_cls ?>"><?= htmlspecialchars($action) ?></span></td>
+                    <td><?= $price > 0 ? 'Rp ' . number_format($price, 0, ',', '.') : '-' ?></td>
+                    <td><?= $lots > 0 ? number_format($lots, 0, ',', '.') : '-' ?></td>
+                    <td><?= $value > 0 ? 'Rp ' . number_format($value, 0, ',', '.') : '-' ?></td>
+                    <td style="font-size:12px;"><?= htmlspecialchars((string)$row['reason']) ?></td>
                 </tr>
                 <?php endforeach; ?>
             <?php endif; ?>
         </tbody>
     </table>
+    <?php if ($ledger_total_pages > 1): ?>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:12px 20px 16px 20px; border-top:1px solid #e2e8f0; background:#fff;">
+        <div style="font-size:12px; color:#475569;">
+            Halaman <b><?= $ledger_page ?></b> dari <b><?= $ledger_total_pages ?></b>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <?php if ($ledger_page > 1): ?>
+                <a href="portfolio.php?robo_run=ok&msg=Paging%20ledger%20diterapkan.&ledger_date=<?= urlencode($ledger_date) ?>&ledger_action=<?= urlencode($ledger_action) ?>&ledger_symbol=<?= urlencode($ledger_symbol) ?>&ledger_page=<?= $ledger_page - 1 ?>" style="padding:6px 12px; background:#e2e8f0; color:#334155; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold;">&laquo; Prev</a>
+            <?php endif; ?>
+            <?php if ($ledger_page < $ledger_total_pages): ?>
+                <a href="portfolio.php?robo_run=ok&msg=Paging%20ledger%20diterapkan.&ledger_date=<?= urlencode($ledger_date) ?>&ledger_action=<?= urlencode($ledger_action) ?>&ledger_symbol=<?= urlencode($ledger_symbol) ?>&ledger_page=<?= $ledger_page + 1 ?>" style="padding:6px 12px; background:#0d6efd; color:#fff; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold;">Next &raquo;</a>
+            <?php endif; ?>
+        </div>
+    </div>
+    <?php endif; ?>
 </div>
 
 <div class="tbl-container" style="border-top: 4px solid #3b82f6;">

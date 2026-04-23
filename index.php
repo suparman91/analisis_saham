@@ -232,7 +232,10 @@ $resMarket = $mysqli->query($sqlMarket);
 $all_stocks = [];
 if ($resMarket) {
     while ($row = $resMarket->fetch_assoc()) {
-        $all_stocks[] = $row;
+        // Hanya proses saham IDX dengan suffix .JK
+        if (strtoupper(substr((string)$row['symbol'], -3)) === '.JK') {
+            $all_stocks[] = $row;
+        }
     }
 }
 
@@ -276,11 +279,9 @@ usort($gainers, fn($a, $b) => $b['pct_change'] <=> $a['pct_change']);
 usort($losers, fn($a, $b) => $a['pct_change'] <=> $b['pct_change']);
 usort($volumes, fn($a, $b) => $b['volume'] <=> $a['volume']);
 
-// If no gainers/losers > 5%, fallback to showing top positive/negative stocks (e.g. on weekends where moves are tiny)
+// If no gainers/losers match thresholds, fallback to top positive/negative movers
 if (empty($gainers)) {
-    // try to get at least > 0
     $gainers = array_filter($all_stocks, fn($s) => $s['pct_change'] > 0);
-    // if still empty (everything is 0%), just take the any top 10 stocks excluding large drops so table isn't empty
     if (empty($gainers)) {
         $gainers = array_filter($all_stocks, fn($s) => $s['pct_change'] >= 0);
     }
@@ -293,7 +294,6 @@ if (empty($gainers)) {
 
 if (empty($losers)) {
     $losers = array_filter($all_stocks, fn($s) => $s['pct_change'] < 0);
-    // if still empty, take some stocks that aren't gainers
     if (empty($losers)) {
         $losers = array_filter($all_stocks, fn($s) => $s['pct_change'] <= 0);
     }
@@ -325,15 +325,15 @@ $top_volume = array_slice($volumes, 0, 10);
   }
 
 // For Multibagger: All stocks with strong momentum (Nilai Transaksi > 1 Miliar dan Naik Mumpuni)
-  $potential_multibaggers = array_filter($all_stocks, fn($s) => ($s['volume'] * $s['close']) > 1000000000 && $s['pct_change'] >= 3);
-  // Diurutkan berdasarkan kenaikan terbesar (pct_change) lalu volume
-  usort($potential_multibaggers, function($a, $b) {
-      if ($a['pct_change'] == $b['pct_change']) {
-          return $b['volume'] <=> $a['volume'];
-      }
-      return $b['pct_change'] <=> $a['pct_change'];
-  });
-  // Menampilkan semua saham tanpa batasan array_slice
+$potential_multibaggers = array_filter($all_stocks, fn($s) => ($s['volume'] * $s['close']) > 1000000000 && $s['pct_change'] >= 3);
+// Diurutkan berdasarkan kenaikan terbesar (pct_change) lalu volume
+usort($potential_multibaggers, function($a, $b) {
+    if ($a['pct_change'] == $b['pct_change']) {
+        return $b['volume'] <=> $a['volume'];
+    }
+    return $b['pct_change'] <=> $a['pct_change'];
+});
+// Menampilkan semua saham tanpa batasan array_slice
 
 // For Top Buy/Sell Asing & Lokal (Bandar Flow Simulation)
 // Real broker summary usually needs IDX direct feed, generating deterministic mock data for display.
