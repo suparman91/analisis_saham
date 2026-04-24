@@ -12,15 +12,24 @@ $pageTitle = 'Analisis Saham IHSG';
   <style>
     body{font-family:Arial,Helvetica,sans-serif;margin:20px}
     #chart-container{width:900px;height:500px}
-    .info{margin-top:10px}
+    .info{margin-top:10px;background:#ffffff;border:1px solid #dbe4f0;border-radius:10px;padding:14px;box-shadow:0 1px 2px rgba(15,23,42,0.04)}
     #raw{max-height:200px;overflow:auto}
-    .badge{display:inline-block;padding:6px 10px;border-radius:6px;color:#fff;font-weight:700}
+    .badge{display:inline-block;padding:4px 10px;border-radius:999px;color:#fff;font-weight:700;font-size:12px;line-height:1.3}
     .badge.buy{background:#198754}
     .badge.sell{background:#dc3545}
     .badge.hold{background:#6c757d}
     .panel{margin-top:12px;padding:10px;background:#fafafa;border:1px solid #eee;border-radius:6px}
-    .indicators{display:flex;gap:16px;align-items:flex-start}
+    .info-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+    .info-summary{flex:1;min-width:280px}
+    .signal-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .signal-meta{display:block;color:#64748b;line-height:1.45;word-break:break-word;margin-top:4px;font-size:12px}
+    .info-actions{margin-left:auto}
+    .info-actions button{font-size:12px;padding:5px 10px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#334155;cursor:pointer}
+    .info-actions button:hover{background:#f8fafc}
+    .indicators{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:10px 24px;align-items:flex-start}
     .ind-col{min-width:160px}
+    .ind-col > div{padding:6px 0;border-bottom:1px dashed #e2e8f0;font-size:14px;color:#0f172a}
+    .ind-col > div:last-child{border-bottom:none}
     /* Modal Styles */
     .modal-backdrop {display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:999;}
     .modal {position:absolute;top:50%;left:50%;transform:translate(-50%, -50%);background:#fff;padding:20px;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,0.1);width:300px;}
@@ -37,6 +46,56 @@ $pageTitle = 'Analisis Saham IHSG';
     }
     .btn-settings { background: #475569; border:none; cursor:pointer; color: #fff; padding: 8px 15px; border-radius: 5px; font-weight: 600; font-size: 14px; transition: background 0.2s; width:100%; }
     .btn-settings:hover { background: #64748b; }
+    
+    /* AI Analysis Styles */
+    .ai-analysis-panel { margin-top:20px; padding:20px; background:linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%); border:2px solid #0d6efd; border-radius:8px; }
+    .ai-analysis-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; border-bottom:2px solid #0d6efd; padding-bottom:15px; }
+    .ai-analysis-header h3 { margin:0; color:#0d6efd; font-size:18px; }
+    .ai-button-group { display:flex; gap:10px; align-items:center; }
+    .btn-ai-analyze { background:#0d6efd; color:#fff; border:none; padding:8px 16px; border-radius:4px; font-weight:bold; cursor:pointer; transition:all 0.3s; }
+    .btn-ai-analyze:hover { background:#0b5ed7; }
+    .btn-ai-analyze:disabled { background:#ccc; cursor:not-allowed; }
+    .btn-ai-free { background:#198754; color:#fff; border:none; padding:8px 12px; border-radius:6px; font-weight:700; cursor:pointer; transition:all 0.2s; }
+    .btn-ai-free:hover { background:#157347; }
+    .btn-ai-google { background:#0d6efd; color:#fff; border:none; padding:8px 12px; border-radius:6px; font-weight:700; cursor:pointer; transition:all 0.2s; }
+    .btn-ai-google:hover { background:#0b5ed7; }
+    .ai-engine-badge { display:inline-block; padding:6px 10px; border-radius:999px; font-size:12px; font-weight:700; border:1px solid transparent; }
+    .ai-engine-badge.free { background:#d1fae5; color:#065f46; border-color:#10b981; }
+    .ai-engine-badge.google { background:#dbeafe; color:#1e3a8a; border-color:#3b82f6; }
+    .ai-engine-badge.auto { background:#f1f5f9; color:#334155; border-color:#94a3b8; }
+    .ai-timeframe-select { padding:6px 10px; border-radius:4px; border:1px solid #cbd5e1; background:#fff; font-size:13px; }
+    
+    /* Speedometer Recommendation Widget */
+    .speedometer-container { display:flex; justify-content:center; align-items:center; margin:30px 0; flex-direction:column; position:relative; }
+    .speedometer { width:200px; height:120px; border-radius:120px 120px 0 0; background:conic-gradient(red 0deg, orange 45deg, yellow 90deg, lightgreen 135deg, green 180deg); position:relative; margin:0 auto; box-shadow:0 4px 8px rgba(0,0,0,0.2); }
+    .speedometer::before { content:''; position:absolute; bottom:10px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:8px solid transparent; border-right:8px solid transparent; border-bottom:12px solid #333; z-index:10; }
+    .speedometer-scale { width:200px; display:flex; justify-content:space-between; margin-top:8px; font-weight:bold; font-size:12px; color:#333; }
+    .speedometer-label { text-align:center; margin-top:15px; font-size:16px; font-weight:bold; color:#333; }
+    .speedometer-value { font-size:24px; font-weight:bold; color:#0d6efd; margin:10px 0; }
+    .speedometer-confidence { font-size:12px; color:#666; margin-top:8px; }
+    
+    /* Analysis Content */
+    .ai-analysis-content { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin:20px 0; }
+    .ai-analysis-section { padding:15px; background:#fff; border-left:4px solid #0d6efd; border-radius:4px; }
+    .ai-analysis-section h4 { margin:0 0 10px 0; color:#0d6efd; font-size:14px; font-weight:bold; }
+    .ai-analysis-section p { margin:8px 0; font-size:13px; line-height:1.6; color:#555; }
+    .ai-analysis-section ul { margin:8px 0; padding-left:20px; font-size:13px; color:#555; }
+    .ai-analysis-section li { margin:4px 0; }
+    .ai-loading { text-align:center; padding:30px; color:#666; }
+    .ai-loading-spinner { display:inline-block; width:30px; height:30px; border:3px solid #f3f3f3; border-top:3px solid #0d6efd; border-radius:50%; animation:spin 1s linear infinite; margin-right:10px; }
+    @keyframes spin { 0% { transform:rotate(0deg); } 100% { transform:rotate(360deg); } }
+    .ai-error { padding:15px; background:#f8d7da; border-left:4px solid #dc3545; border-radius:4px; color:#721c24; margin:15px 0; }
+    .ai-success { padding:15px; background:#d4edda; border-left:4px solid #198754; border-radius:4px; color:#155724; margin:15px 0; }
+    .price-targets { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin:15px 0; }
+    .price-target { text-align:center; padding:12px; background:#f0f0f0; border-radius:4px; }
+    .price-target label { font-size:11px; color:#666; display:block; margin-bottom:5px; }
+    .price-target .value { font-size:16px; font-weight:bold; color:#0d6efd; }
+    .ai-advanced-grid { display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:10px; margin-top:10px; }
+    .ai-advanced-item { background:#f8fafc; border:1px solid #dbeafe; border-radius:6px; padding:10px; }
+    .ai-advanced-item .k { font-size:11px; color:#64748b; display:block; margin-bottom:4px; }
+    .ai-advanced-item .v { font-size:13px; color:#0f172a; font-weight:700; }
+    .ai-advanced-list { margin:8px 0 0 18px; padding:0; color:#475569; font-size:13px; }
+    @media(max-width:768px) { .ai-analysis-content { grid-template-columns:1fr; } .ai-analysis-header { flex-direction:column; align-items:flex-start; gap:10px; } .ai-button-group { flex-wrap:wrap; } .indicators{grid-template-columns:1fr;} .info-actions{width:100%;display:flex;justify-content:flex-end;} .signal-meta{font-size:11px;} .ind-col > div{font-size:13px;} }
   </style>
 
   <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
@@ -81,6 +140,39 @@ $pageTitle = 'Analisis Saham IHSG';
     </div>
   </div>
 
+  <!-- AI Analysis Modal -->
+  <div id="aiAnalysisModal" class="modal-backdrop">
+    <div class="modal" style="width:350px; max-height:90vh; overflow-y:auto;">
+      <h3>🤖 Analisis by AI (Google Gemini)</h3>
+      <label style="display:block; margin-bottom:10px;">
+        <strong>Google Gemini API Token:</strong>
+        <input id="gemini_api_token" type="password" placeholder="Dapatkan dari console.cloud.google.com" style="width:100%; padding:8px; box-sizing:border-box; margin-top:5px;">
+      </label>
+      <small style="color:#666;display:block;margin-bottom:15px;line-height:1.4;">
+        📝 Masukkan API key dari Google Cloud Console (Gemini 1.5 Flash API).
+        <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:#0d6efd;text-decoration:underline;">Buat API key di sini</a>
+      </small>
+      <small style="color:#475569;display:block;margin-bottom:12px;line-height:1.4;">
+        Tidak ada token? Tetap bisa pakai analisis lokal dengan detail teknikal, fundamental, sentimen, risiko, dan rekomendasi.
+      </small>
+      <label style="display:block; margin-bottom:15px;">
+        <strong>Timeframe Analisis:</strong>
+        <select id="gemini_timeframe" style="width:100%; padding:8px; box-sizing:border-box; margin-top:5px;">
+          <option value="1W">1 Minggu (1W)</option>
+          <option value="1M" selected>1 Bulan (1M)</option>
+          <option value="3M">3 Bulan (3M)</option>
+          <option value="6M">6 Bulan (6M)</option>
+          <option value="1Y">1 Tahun (1Y)</option>
+        </select>
+      </label>
+      <div class="modal-actions">
+        <button id="useFreeAnalysis" style="background:#198754;color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;margin-right:5px;">Pakai Gratis</button>
+        <button id="closeAiModal" style="background:#6c757d;color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;margin-right:5px;">Batal</button>
+        <button id="saveAiConfig" style="background:#0d6efd;color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">Lanjut</button>
+      </div>
+    </div>
+  </div>
+
   <h2 id="chart-title" style="margin-bottom:10px; color:#0d6efd; font-size:22px;"></h2>
   <div style="display:flex; flex-wrap:wrap; gap:20px;">
     <div id="chart-container" style="flex:1; min-width:700px; position: relative;">
@@ -109,18 +201,18 @@ $pageTitle = 'Analisis Saham IHSG';
   </div>
 
   <div class="panel info">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-      <div>
-        <div style="margin-bottom:8px">
+    <div class="info-header" style="margin-bottom:10px;">
+      <div class="info-summary">
+        <div class="signal-row" style="margin-bottom:4px">
           <strong>Technical Signal:</strong> <span id="signal" class="badge hold">-</span>
-          <small id="signal_details" style="color:#666; margin-left:8px;"></small>
         </div>
+        <small id="signal_details" class="signal-meta"></small>
         <div>
           <strong>Fundamental:</strong> <span id="fund_status" style="font-weight:bold;">-</span> 
           <small>(Score: <span id="fund">-</span>)</small>
         </div>
       </div>
-      <div><button id="toggleRaw">Toggle raw JSON</button></div>
+      <div class="info-actions"><button id="toggleRaw">Toggle raw JSON</button></div>
     </div>
     <div class="indicators">
       <div class="ind-col">
@@ -138,35 +230,158 @@ $pageTitle = 'Analisis Saham IHSG';
     </div>
     
     <div id="fundamental-ext-panel" style="margin-top:20px; padding:15px; border-top:2px solid #0d6efd; font-size:13px; color:#333; background:#f8fafc; display:none"></div>
-    <div class="technical-glossary" style="margin-top:20px; padding-top:15px; border-top:1px solid #eee; font-size:13px; color:#555;">
-      <h4 style="margin:0 0 8px 0; color:#333; font-size:14px;">Kamus Indikator Teknikal:</h4>
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
-        <div>
-          <strong>SMA (Simple Moving Average):</strong> Menunjukkan arah tren pergerakan harga. <br>
-          <span style="color:#28a745">• Bullish:</span> Tren sedang membaik/naik. <br>
-          <span style="color:#d9534f">• Bearish:</span> Tren sedang melemah/turun.
+
+    <pre id="raw" style="background:#f4f4f4;padding:8px;display:none"></pre>
+  </div>
+  <!-- AI Analysis Panel -->
+  <div id="aiAnalysisPanel" class="ai-analysis-panel" style="display:none;">
+    <div class="ai-analysis-header">
+      <div>
+        <h3>🤖 Analisis Detail by AI</h3>
+        <small style="color:#666;">Pilih mode: Gratis (tanpa token) atau Google AI (pakai token).</small>
+      </div>
+      <div class="ai-button-group">
+        <select id="aiTimeframeSelect" class="ai-timeframe-select">
+          <option value="1W">1W</option>
+          <option value="1M" selected>1M</option>
+          <option value="3M">3M</option>
+          <option value="6M">6M</option>
+          <option value="1Y">1Y</option>
+        </select>
+        <button id="btnAnalyzeFree" class="btn-ai-free">Analisis Gratis</button>
+        <button id="btnAnalyzeGoogle" class="btn-ai-google">Analisis Google AI</button>
+        <span id="aiEngineBadge" class="ai-engine-badge auto">Mode Auto</span>
+      </div>
+    </div>
+
+    <!-- Recommendation Speedometer -->
+    <div id="aiRecommendationContainer" style="display:none;">
+      <div class="speedometer-container">
+        <div class="speedometer" id="aiSpeedometer"></div>
+        <div class="speedometer-scale">
+          <div>SELL</div>
+          <div>HOLD</div>
+          <div>BUY</div>
+          <div>HOT</div>
         </div>
-        <div>
-          <strong>MACD (Moving Average Convergence Divergence):</strong> Mengukur momentum tren. <br>
-          <span style="color:#28a745">• Positive:</span> Momentum harga menguat (Bagus). <br>
-          <span style="color:#d9534f">• Negative:</span> Momentum harga melemah (Hati-hati).
-        </div>
-        <div>
-          <strong>RSI (Relative Strength Index):</strong> Indikator tingkat kejenuhan volatilitas (0-100). <br>
-          <span style="color:#28a745">• Oversold (&lt;30):</span> Harga terlalu murah (rapat pantul naik). <br>
-          <span style="color:#d9534f">• Overbought (&gt;70):</span> Harga terlalu mahal (rawan koreksi/turun).
-        </div>
-        <div>
-          <strong>Bollinger Bands (BB):</strong> Mengukur batasan wajar harga dalam volatilitas. <br>
-          <span style="color:#28a745">• Price &lt; BB Lower:</span> Harga melewati batas bawah (Peluang Rebound). <br>
-          <span style="color:#d9534f">• Price &gt; BB Upper:</span> Harga melewati batas atas (Peluang Jual).
+        <div class="speedometer-label" id="aiRecommendationText">-</div>
+        <div class="speedometer-value" id="aiRecommendationValue">-</div>
+        <div style="font-size:12px; color:#666; text-align:center;">
+          Confidence: <strong id="aiConfidenceLevel">-</strong>
         </div>
       </div>
     </div>
 
-    <pre id="raw" style="background:#f4f4f4;padding:8px;display:none"></pre>
+    <!-- Analysis Content -->
+    <div id="aiAnalysisContent" style="display:none;">
+      <!-- Technical Analysis -->
+      <div class="ai-analysis-section" style="grid-column:1;">
+        <h4>📊 Analisis Teknikal</h4>
+        <div id="aiTechnicalContent">-</div>
+      </div>
+      
+      <!-- Fundamental Analysis -->
+      <div class="ai-analysis-section" style="grid-column:2;">
+        <h4>💼 Analisis Fundamental</h4>
+        <div id="aiFundamentalContent">-</div>
+      </div>
+      
+      <!-- Sentiment Analysis -->
+      <div class="ai-analysis-section">
+        <h4>📈 Analisis Sentimen</h4>
+        <div id="aiSentimentContent">-</div>
+      </div>
+      
+      <!-- Risk Factors -->
+      <div class="ai-analysis-section">
+        <h4>⚠️ Faktor Risiko</h4>
+        <div id="aiRiskContent">-</div>
+      </div>
+
+      <!-- Price Targets -->
+      <div style="grid-column:1/-1; margin-top:20px;">
+        <h4 style="color:#0d6efd; margin-bottom:10px;">📍 Target Harga & Entry/Exit Points</h4>
+        <div class="price-targets">
+          <div class="price-target">
+            <label>Entry Price</label>
+            <div class="value" id="aiEntryPrice">-</div>
+          </div>
+          <div class="price-target">
+            <label>Take Profit</label>
+            <div class="value" id="aiTakeProfitPrice" style="color:#28a745;">-</div>
+          </div>
+          <div class="price-target">
+            <label>Stop Loss</label>
+            <div class="value" id="aiStopLossPrice" style="color:#dc3545;">-</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Google Advanced Metrics -->
+      <div id="aiAdvancedMetrics" style="grid-column:1/-1; margin-top:20px; display:none;">
+        <div class="ai-analysis-section" style="border-left-color:#2563eb;">
+          <h4>🧠 Google AI Advanced Metrics</h4>
+          <div class="ai-advanced-grid">
+            <div class="ai-advanced-item"><span class="k">Probabilitas Menang</span><span id="aiProbWin" class="v">-</span></div>
+            <div class="ai-advanced-item"><span class="k">Risk / Reward</span><span id="aiRiskReward" class="v">-</span></div>
+            <div class="ai-advanced-item"><span class="k">Horizon Waktu</span><span id="aiTimeHorizon" class="v">-</span></div>
+          </div>
+          <div style="margin-top:10px; font-size:13px; color:#1f2937;"><strong>Skenario Bull:</strong> <span id="aiScenarioBull">-</span></div>
+          <div style="margin-top:6px; font-size:13px; color:#1f2937;"><strong>Skenario Base:</strong> <span id="aiScenarioBase">-</span></div>
+          <div style="margin-top:6px; font-size:13px; color:#1f2937;"><strong>Skenario Bear:</strong> <span id="aiScenarioBear">-</span></div>
+          <div style="margin-top:10px; font-size:13px; color:#1f2937;"><strong>Katalis Kunci:</strong><ul id="aiCatalysts" class="ai-advanced-list"></ul></div>
+          <div style="margin-top:10px; font-size:13px; color:#1f2937;"><strong>Execution Plan:</strong><ul id="aiExecutionPlan" class="ai-advanced-list"></ul></div>
+          <div style="margin-top:10px; font-size:13px; color:#1f2937;"><strong>AI Edge:</strong> <span id="aiEdge">-</span></div>
+        </div>
+      </div>
+
+      <!-- Conclusion -->
+      <div style="grid-column:1/-1; margin-top:20px;">
+        <div class="ai-analysis-section">
+          <h4>✅ Kesimpulan & Rekomendasi</h4>
+          <div id="aiConclusionContent">-</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading State -->
+    <div id="aiLoadingState" style="display:none;">
+      <div class="ai-loading">
+        <div class="ai-loading-spinner"></div>
+        <div>Sedang melakukan analisis AI...</div>
+        <small style="color:#999; margin-top:10px;">Ini mungkin memakan waktu 30-60 detik. Silakan tunggu...</small>
+      </div>
+    </div>
+
+    <!-- Status Messages -->
+    <div id="aiStatusMessage"></div>
   </div>
 
+  <div class="technical-glossary panel" style="font-size:13px; color:#555;">
+    <h4 style="margin:0 0 8px 0; color:#333; font-size:14px;">Kamus Indikator Teknikal:</h4>
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+      <div>
+        <strong>SMA (Simple Moving Average):</strong> Menunjukkan arah tren pergerakan harga. <br>
+        <span style="color:#28a745">• Bullish:</span> Tren sedang membaik/naik. <br>
+        <span style="color:#d9534f">• Bearish:</span> Tren sedang melemah/turun.
+      </div>
+      <div>
+        <strong>MACD (Moving Average Convergence Divergence):</strong> Mengukur momentum tren. <br>
+        <span style="color:#28a745">• Positive:</span> Momentum harga menguat (Bagus). <br>
+        <span style="color:#d9534f">• Negative:</span> Momentum harga melemah (Hati-hati).
+      </div>
+      <div>
+        <strong>RSI (Relative Strength Index):</strong> Indikator tingkat kejenuhan volatilitas (0-100). <br>
+        <span style="color:#28a745">• Oversold (&lt;30):</span> Harga terlalu murah (rapat pantul naik). <br>
+        <span style="color:#d9534f">• Overbought (&gt;70):</span> Harga terlalu mahal (rawan koreksi/turun).
+      </div>
+      <div>
+        <strong>Bollinger Bands (BB):</strong> Mengukur batasan wajar harga dalam volatilitas. <br>
+        <span style="color:#28a745">• Price &lt; BB Lower:</span> Harga melewati batas bawah (Peluang Rebound). <br>
+        <span style="color:#d9534f">• Price &gt; BB Upper:</span> Harga melewati batas atas (Peluang Jual).
+      </div>
+    </div>
+  </div>
 <script>
 // Helper: Fundamental glossary
 const FUND_GLOSSARY = {
@@ -352,10 +567,6 @@ function render(symbol){
 
     // Fundamental eksternal (Yahoo Finance)
     const fundPanel = document.getElementById('fundamental-ext-panel');
-    let kode = symbol.split('.')[0];
-    let idxLinkHtml = '<div style="margin-top:10px;font-size:13px;">'
-      +'<a href="https://www.idx.co.id/id/data-pasar/laporan-keuangan-dan-tahunan/?emiten='+kode+'" target="_blank" style="color:#0d6efd;text-decoration:underline;font-weight:bold;">Lihat Laporan Keuangan Lengkap di IDX ('+kode+')</a>'
-      +'</div>';
     if (data.fundamental_ext) {
       let f = data.fundamental_ext;
       let html = '<h4 style="margin:0 0 8px 0; color:#0d6efd;">Laporan Keuangan & Rasio Terbaru</h4>';
@@ -370,13 +581,10 @@ function render(symbol){
       html += '<tr><td><b>Book Value</b></td><td>'+(f.book_value!==null?Number(f.book_value).toLocaleString():"-")+'</td><td>'+FUND_GLOSSARY.book_value+'</td></tr>';
       html += '<tr><td><b>Mata Uang</b></td><td>'+(f.currency||"-")+'</td><td>'+FUND_GLOSSARY.currency+'</td></tr>';
       html += '</table>';
-      html += '<div style="margin-top:10px;font-size:13px;">'
-        +'<a href="https://www.idx.co.id/id/data-pasar/laporan-keuangan-dan-tahunan/?emiten='+kode+'" target="_blank" style="color:#0d6efd;text-decoration:underline;font-weight:bold;">Lihat Laporan Keuangan Lengkap di IDX ('+kode+')</a>'
-        +'</div>';
-      fundPanel.innerHTML = html + idxLinkHtml;
+      fundPanel.innerHTML = html;
       fundPanel.style.display = '';
     } else {
-      fundPanel.innerHTML = idxLinkHtml;
+      fundPanel.innerHTML = '<div style="font-size:13px;color:#64748b;">Data laporan keuangan eksternal belum tersedia.</div>';
       fundPanel.style.display = '';
     }
 
@@ -551,6 +759,9 @@ function render(symbol){
 
       updateLivePrice(symbol);
       liveUpdateInterval = setInterval(()=>updateLivePrice(symbol), 15000);
+
+      // Auto-run analysis right after chart data is loaded.
+      runAutoAnalysis(symbol);
   });
 }
 
@@ -607,8 +818,362 @@ document.getElementById('toggleRaw').addEventListener('click', ()=>{
     
     const gk = localStorage.getItem('goapi_key');
     if(gk) document.getElementById('goapi_key').value = gk;
+    
+    const gemini_token = localStorage.getItem('gemini_api_token');
+    if(gemini_token) document.getElementById('gemini_api_token').value = gemini_token;
   } catch(e){}
 })();
+
+// AI Analysis Functions
+let aiAnalysisData = null;
+
+function setEngineBadge(mode) {
+  const badge = document.getElementById('aiEngineBadge');
+  if (!badge) return;
+  if (mode === 'GOOGLE') {
+    badge.className = 'ai-engine-badge google';
+    badge.innerText = 'Mode Google AI';
+    return;
+  }
+  if (mode === 'FREE') {
+    badge.className = 'ai-engine-badge free';
+    badge.innerText = 'Mode Lokal';
+    return;
+  }
+  badge.className = 'ai-engine-badge auto';
+  badge.innerText = 'Mode Auto';
+}
+
+document.getElementById('btnAnalyzeFree').addEventListener('click', function() {
+  const symbol = document.getElementById('symbol').value;
+  if (!symbol) {
+    alert('Silakan pilih saham terlebih dahulu');
+    return;
+  }
+  performFreeAnalysis(symbol);
+});
+
+document.getElementById('btnAnalyzeGoogle').addEventListener('click', function() {
+  const symbol = document.getElementById('symbol').value;
+  if (!symbol) {
+    alert('Silakan pilih saham terlebih dahulu');
+    return;
+  }
+  const token = localStorage.getItem('gemini_api_token');
+  if (!token) {
+    document.getElementById('aiAnalysisModal').style.display = 'block';
+    return;
+  }
+  performAiAnalysis(symbol, token, false);
+});
+
+document.getElementById('closeAiModal').addEventListener('click', function() {
+  document.getElementById('aiAnalysisModal').style.display = 'none';
+});
+
+document.getElementById('saveAiConfig').addEventListener('click', function() {
+  const token = document.getElementById('gemini_api_token').value.trim();
+  const timeframe = document.getElementById('gemini_timeframe').value;
+  
+  if (!token) {
+    const symbolNoToken = document.getElementById('symbol').value;
+    document.getElementById('aiAnalysisModal').style.display = 'none';
+    if (symbolNoToken) {
+      document.getElementById('aiTimeframeSelect').value = timeframe;
+      performFreeAnalysis(symbolNoToken);
+      return;
+    }
+    alert('Silakan pilih saham terlebih dahulu');
+    return;
+  }
+  
+  localStorage.setItem('gemini_api_token', token);
+  localStorage.setItem('gemini_analysis_timeframe', timeframe);
+  document.getElementById('aiAnalysisModal').style.display = 'none';
+  
+  const symbol = document.getElementById('symbol').value;
+  if (symbol) {
+    document.getElementById('aiTimeframeSelect').value = timeframe;
+    performAiAnalysis(symbol, token, false);
+  }
+});
+
+document.getElementById('aiTimeframeSelect').addEventListener('change', function() {
+  localStorage.setItem('gemini_analysis_timeframe', this.value);
+  const symbol = document.getElementById('symbol').value;
+  const token = localStorage.getItem('gemini_api_token');
+  if (symbol && token) {
+    performAiAnalysis(symbol, token, false);
+  } else if (symbol) {
+    performFreeAnalysis(symbol);
+  }
+});
+
+document.getElementById('useFreeAnalysis').addEventListener('click', function() {
+  const symbol = document.getElementById('symbol').value;
+  document.getElementById('aiAnalysisModal').style.display = 'none';
+  if (!symbol) {
+    alert('Silakan pilih saham terlebih dahulu');
+    return;
+  }
+  performFreeAnalysis(symbol);
+});
+
+function performAiAnalysis(symbol, api_token, allowFallbackToLocal = false) {
+  const timeframe = document.getElementById('aiTimeframeSelect').value;
+  const loadingState = document.getElementById('aiLoadingState');
+  const contentState = document.getElementById('aiAnalysisContent');
+  const recommendationContainer = document.getElementById('aiRecommendationContainer');
+  const statusMessage = document.getElementById('aiStatusMessage');
+  const panel = document.getElementById('aiAnalysisPanel');
+  
+  panel.style.display = 'block';
+  setEngineBadge('GOOGLE');
+  loadingState.style.display = 'block';
+  contentState.style.display = 'none';
+  recommendationContainer.style.display = 'none';
+  statusMessage.innerHTML = '';
+  
+  fetch('gemini_analyze.php', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      symbol: symbol,
+      timeframe: timeframe,
+      api_token: api_token,
+      mode: 'manual'
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) {
+      throw new Error(data.error);
+    }
+    
+    aiAnalysisData = data;
+    loadingState.style.display = 'none';
+    displayAiAnalysis(data);
+  })
+  .catch(error => {
+    loadingState.style.display = 'none';
+    const errorMsg = error.message || 'Terjadi kesalahan saat melakukan analisis';
+    const lower = String(errorMsg).toLowerCase();
+    const isQuotaOrRateLimit = lower.includes('http 429') || lower.includes('quota') || lower.includes('rate limit');
+
+    if (isQuotaOrRateLimit && allowFallbackToLocal) {
+      statusMessage.innerHTML = '<div class="ai-error">⚠️ Kuota Google AI habis. Sistem otomatis beralih ke analisis lokal.</div>';
+      console.warn('Gemini quota exceeded, fallback to local analysis. Detail:', errorMsg);
+      performFreeAnalysis(symbol);
+      return;
+    }
+
+    if (isQuotaOrRateLimit && !allowFallbackToLocal) {
+      if (contentState) contentState.style.display = 'none';
+      if (recommendationContainer) recommendationContainer.style.display = 'none';
+      const adv = document.getElementById('aiAdvancedMetrics');
+      if (adv) adv.style.display = 'none';
+      statusMessage.innerHTML = '<div class="ai-error">❌ Google AI tidak berjalan karena kuota habis (429). Hasil lokal tidak ditampilkan agar tidak membingungkan. Silakan isi token lain / aktifkan billing.</div>';
+      return;
+    }
+
+    statusMessage.innerHTML = '<div class="ai-error">❌ ' + errorMsg + '</div>';
+    console.error('AI Analysis Error:', error);
+  });
+}
+
+function performFreeAnalysis(symbol) {
+  const timeframe = document.getElementById('aiTimeframeSelect').value;
+  const loadingState = document.getElementById('aiLoadingState');
+  const contentState = document.getElementById('aiAnalysisContent');
+  const recommendationContainer = document.getElementById('aiRecommendationContainer');
+  const statusMessage = document.getElementById('aiStatusMessage');
+  const panel = document.getElementById('aiAnalysisPanel');
+
+  panel.style.display = 'block';
+  setEngineBadge('FREE');
+  loadingState.style.display = 'block';
+  contentState.style.display = 'none';
+  recommendationContainer.style.display = 'none';
+  statusMessage.innerHTML = '';
+
+  fetch('free_ai_analyze.php?symbol=' + encodeURIComponent(symbol) + '&timeframe=' + encodeURIComponent(timeframe))
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      aiAnalysisData = data;
+      loadingState.style.display = 'none';
+      displayAiAnalysis(data);
+    })
+    .catch(error => {
+      loadingState.style.display = 'none';
+      const errorMsg = error.message || 'Terjadi kesalahan saat melakukan analisis gratis';
+      statusMessage.innerHTML = '<div class="ai-error">❌ ' + errorMsg + '</div>';
+      console.error('Free Analysis Error:', error);
+    });
+}
+
+function runAutoAnalysis(symbol) {
+  if (!symbol) return;
+  const token = localStorage.getItem('gemini_api_token');
+  setEngineBadge('AUTO');
+  if (token) {
+    performAiAnalysis(symbol, token, true);
+  } else {
+    performFreeAnalysis(symbol);
+  }
+}
+
+function displayAiAnalysis(data) {
+  const analysis = data.analysis || {};
+  const contentState = document.getElementById('aiAnalysisContent');
+  const recommendationContainer = document.getElementById('aiRecommendationContainer');
+  const statusMessage = document.getElementById('aiStatusMessage');
+  const advancedPanel = document.getElementById('aiAdvancedMetrics');
+
+  const _escapeHtml = (v) => String(v || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+  const _formatAnalysis = (v) => {
+    const clean = _escapeHtml(v || 'N/A');
+    return '<p>' + clean.replace(/\n/g, '<br>') + '</p>';
+  };
+  
+  // Display technical analysis
+  document.getElementById('aiTechnicalContent').innerHTML = _formatAnalysis(analysis.technical_analysis);
+  
+  // Display fundamental analysis
+  document.getElementById('aiFundamentalContent').innerHTML = _formatAnalysis(analysis.fundamental_analysis);
+  
+  // Display sentiment analysis
+  document.getElementById('aiSentimentContent').innerHTML = _formatAnalysis(analysis.sentiment_analysis);
+  
+  // Display risk factors
+  document.getElementById('aiRiskContent').innerHTML = _formatAnalysis(analysis.risk_factors);
+  
+  // Display conclusion
+  document.getElementById('aiConclusionContent').innerHTML = _formatAnalysis(analysis.conclusion);
+  
+  // Display price targets
+  document.getElementById('aiEntryPrice').innerText = 
+    analysis.entry_price ? 'Rp ' + Number(analysis.entry_price).toLocaleString('id-ID') : '-';
+  document.getElementById('aiTakeProfitPrice').innerText = 
+    analysis.take_profit ? 'Rp ' + Number(analysis.take_profit).toLocaleString('id-ID') : '-';
+  document.getElementById('aiStopLossPrice').innerText = 
+    analysis.stop_loss ? 'Rp ' + Number(analysis.stop_loss).toLocaleString('id-ID') : '-';
+  
+  // Display recommendation speedometer
+  updateSpeedometer(analysis.recommendation, analysis.confidence_level);
+
+  // Show Google-only advanced metrics panel.
+  const isGoogle = String(data.engine || '').toUpperCase() === 'GOOGLE_AI';
+  if (advancedPanel) {
+    if (isGoogle) {
+      const setText = (id, v) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.innerHTML = _escapeHtml(v || '-').replace(/\n/g, '<br>');
+      };
+      const setList = (id, arr) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const list = Array.isArray(arr) ? arr.filter(Boolean) : [];
+        if (list.length === 0) {
+          el.innerHTML = '<li>-</li>';
+          return;
+        }
+        el.innerHTML = list.map(item => '<li>' + _escapeHtml(String(item)) + '</li>').join('');
+      };
+
+      setText('aiProbWin', analysis.probability_win_pct != null ? (analysis.probability_win_pct + '%') : '-');
+      setText('aiRiskReward', analysis.risk_reward_ratio != null ? String(analysis.risk_reward_ratio) : '-');
+      setText('aiTimeHorizon', analysis.time_horizon || '-');
+      setText('aiScenarioBull', analysis.scenario_bull || '-');
+      setText('aiScenarioBase', analysis.scenario_base || '-');
+      setText('aiScenarioBear', analysis.scenario_bear || '-');
+      setList('aiCatalysts', analysis.key_catalysts);
+      setList('aiExecutionPlan', analysis.execution_plan);
+      setText('aiEdge', analysis.ai_edge || '-');
+      advancedPanel.style.display = '';
+    } else {
+      advancedPanel.style.display = 'none';
+    }
+  }
+  
+  // Show success message
+  const timestamp = data.timestamp;
+  const modelInfo = data.model_used ? (' - ' + data.model_used) : '';
+  const engine = data.engine ? ' (' + data.engine + modelInfo + ')' : ' (GEMINI)';
+  statusMessage.innerHTML = '<div class="ai-success">✅ Analisis berhasil dilakukan pada ' + timestamp + engine + '</div>';
+
+  if (data.engine === 'FREE_LOCAL') {
+    setEngineBadge('FREE');
+  } else {
+    setEngineBadge('GOOGLE');
+  }
+  
+  contentState.style.display = 'grid';
+  recommendationContainer.style.display = 'block';
+}
+
+function updateSpeedometer(recommendation, confidence) {
+  const recommendationText = document.getElementById('aiRecommendationText');
+  const recommendationValue = document.getElementById('aiRecommendationValue');
+  const confidenceLevel = document.getElementById('aiConfidenceLevel');
+  const speedometer = document.getElementById('aiSpeedometer');
+  
+  // Map recommendation to degree (0-180)
+  const degreeMap = {
+    'SELL': 0,
+    'HOLD': 60,
+    'BUY': 120,
+    'HOT': 180
+  };
+  
+  const colorMap = {
+    'SELL': '#dc3545',
+    'HOLD': '#6c757d',
+    'BUY': '#28a745',
+    'HOT': '#0d6efd'
+  };
+  
+  const degree = degreeMap[recommendation] || 90;
+  const color = colorMap[recommendation] || '#6c757d';
+  
+  // Create arrow with rotation
+  speedometer.innerHTML = '';
+  speedometer.style.background = 'conic-gradient(red 0deg, orange 45deg, yellow 90deg, lightgreen 135deg, green 180deg)';
+  const arrow = document.createElement('div');
+  arrow.style.position = 'absolute';
+  arrow.style.bottom = '10px';
+  arrow.style.left = '50%';
+  arrow.style.transform = 'translateX(-50%) rotate(' + degree + 'deg)';
+  arrow.style.width = '0';
+  arrow.style.height = '0';
+  arrow.style.borderLeft = '8px solid transparent';
+  arrow.style.borderRight = '8px solid transparent';
+  arrow.style.borderBottom = '12px solid #333';
+  arrow.style.zIndex = '10';
+  speedometer.appendChild(arrow);
+  
+  recommendationText.innerText = recommendation;
+  recommendationText.style.color = color;
+  recommendationValue.innerText = '🎯 ' + recommendation;
+  recommendationValue.style.color = color;
+  confidenceLevel.innerText = confidence || '-';
+}
+
+// Check if timeframe was saved
+window.addEventListener('load', function() {
+  const savedTimeframe = localStorage.getItem('gemini_analysis_timeframe');
+  if (savedTimeframe) {
+    document.getElementById('aiTimeframeSelect').value = savedTimeframe;
+  }
+});
 
 window.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => {

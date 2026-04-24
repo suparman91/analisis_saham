@@ -122,15 +122,19 @@ while ($open && ($t = $open->fetch_assoc())) {
 		$reason = 'Stop Loss (' . round($pct * 100, 2) . '%)';
 	}
 	if ($sell) {
-		$lots = (int)$t['lots'];
-		$tid = (int)$t['id'];
-		$pl = ($currPrice - $buyPrice) * ($lots * 100);
-		$value = $currPrice * $lots * 100;
-		$reasonEsc = $mysqli->real_escape_string($reason);
-		$mysqli->query("UPDATE robo_trades SET status='CLOSED', sell_price={$currPrice}, sell_date='{$sellDate}', sell_reason='{$reasonEsc}', profit_loss_rp={$pl}, profit_loss_pct=" . ($pct * 100) . " WHERE id={$tid} AND user_id={$user_id}");
-		$mysqli->query("UPDATE users SET robo_balance = robo_balance + {$value} WHERE id = {$user_id}");
-		$balance += $value;
-		$actions[] = 'SELL ' . $sym . ' (' . round($pct * 100, 2) . '%)';
+		if (robo_is_bursa_open()) {
+			$lots = (int)$t['lots'];
+			$tid = (int)$t['id'];
+			$pl = ($currPrice - $buyPrice) * ($lots * 100);
+			$value = $currPrice * $lots * 100;
+			$reasonEsc = $mysqli->real_escape_string($reason);
+			$mysqli->query("UPDATE robo_trades SET status='CLOSED', sell_price={$currPrice}, sell_date='{$sellDate}', sell_reason='{$reasonEsc}', profit_loss_rp={$pl}, profit_loss_pct=" . ($pct * 100) . " WHERE id={$tid} AND user_id={$user_id}");
+			$mysqli->query("UPDATE users SET robo_balance = robo_balance + {$value} WHERE id = {$user_id}");
+			$balance += $value;
+			$actions[] = 'SELL ' . $sym . ' (' . round($pct * 100, 2) . '%)';
+		} else {
+			$actions[] = 'SKIP SELL ' . $sym . ' (di luar jam bursa)';
+		}
 	}
 }
 

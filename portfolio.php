@@ -131,21 +131,17 @@ if (!isset($_GET['robo_run']) && !isset($_GET['no_auto_robo'])) {
     exit;
 }
 
-// --- Hitung total investasi (modal yang sudah diinvestasikan ke saham/posisi aktif) ---
-if (!isset($total_invested)) {
-    $total_invested = 0;
-    if (isset($open) && is_array($open)) {
-        foreach ($open as $o) {
-            $total_invested += (float)$o['buy_price'] * (int)$o['lots'] * 100;
-        }
-    }
-}
-
 // Portfolio Open (User spesifik)
 // Gabungkan posisi per simbol agar tampilan menyerupai akun sekuritas (lot ditotal, harga jadi rata-rata tertimbang).
 $open = [];
 $res_open = $mysqli->query("SELECT symbol, MIN(buy_date) AS buy_date, SUM(lots) AS lots, (SUM(buy_price * lots) / NULLIF(SUM(lots), 0)) AS buy_price, GROUP_CONCAT(buy_reason SEPARATOR ' | ') AS buy_reason FROM robo_trades WHERE status='OPEN' AND user_id = $user_id GROUP BY symbol ORDER BY buy_date DESC");
 if ($res_open) { while ($r = $res_open->fetch_assoc()) $open[] = $r; }
+
+// Hitung total investasi sesudah data posisi OPEN tersedia.
+$total_invested = 0;
+foreach ($open as $o) {
+    $total_invested += (float)$o['buy_price'] * (int)$o['lots'] * 100;
+}
 
 // Ambil harga terbaru untuk setiap posisi OPEN lalu hitung floating P/L
 $latest_prices = [];
@@ -197,8 +193,12 @@ foreach ($open as &$o) {
     $analysis = analyze_symbol($mysqli, $o['symbol']);
     $ai_signals = [];
     $other_reasons = [];
+    $thought_steps = [];
     if (strpos($analysis['signal_details'], 'Golden Cross') !== false) {
         $ai_signals[] = 'Teknikal: Golden Cross (SMA5 > SMA20) terkonfirmasi';
+        $thought_steps[] = 'Langkah 1 - Tren: Golden Cross terdeteksi, momentum naik dianggap valid.';
+    } else {
+        $thought_steps[] = 'Langkah 1 - Tren: Belum ada Golden Cross baru, posisi dipantau lebih ketat.';
     }
     // Volume breakout
     $avgVol5 = 0;
@@ -211,21 +211,62 @@ foreach ($open as &$o) {
         if ($vols[$i] > $avgVol5 * 1.5) {
             $volBreakout = true;
             $ai_signals[] = 'Volume Breakout: Volume hari ini (' . number_format($vols[$i]) . ') > 1.5x rata-rata 5 hari (' . number_format($avgVol5) . ')';
+            $thought_steps[] = 'Langkah 2 - Volume: Ada konfirmasi volume breakout, probabilitas kelanjutan tren meningkat.';
+        } else {
+            $thought_steps[] = 'Langkah 2 - Volume: Belum breakout signifikan, posisi dijaga tanpa agresif tambah lot.';
         }
+    } else {
+        $thought_steps[] = 'Langkah 2 - Volume: Data volume historis belum cukup untuk konfirmasi breakout.';
     }
     // Alasan lain: sentimen, fundamental, skor AI
     if (!empty($analysis['global_sentiment'])) {
         $other_reasons[] = 'Sentimen: ' . $analysis['global_sentiment'] . (!empty($analysis['global_sentiment_details']) ? ' (' . $analysis['global_sentiment_details'] . ')' : '');
+        $sentimentLabel = strtoupper((string)$analysis['global_sentiment']);
+        if (strpos($sentimentLabel, 'NEG') !== false) {
+            $thought_steps[] = 'Langkah 3 - Sentimen: Sentimen eksternal cenderung negatif, AI menurunkan agresivitas.';
+        } elseif (strpos($sentimentLabel, 'POS') !== false) {
+            $thought_steps[] = 'Langkah 3 - Sentimen: Sentimen eksternal positif, sinyal teknikal mendapat dukungan.';
+        } else {
+            $thought_steps[] = 'Langkah 3 - Sentimen: Sentimen netral, keputusan lebih ditopang data harga/volume.';
+        }
+    } else {
+        $thought_steps[] = 'Langkah 3 - Sentimen: Data sentimen tidak tersedia, AI fokus pada teknikal dan risiko.';
     }
     if (!empty($analysis['fundamental'])) {
         $f = $analysis['fundamental'];
         $other_reasons[] = 'Fundamental: PE ' . ($f['pe'] ?? '-') . ', PBV ' . ($f['pbv'] ?? '-') . ', ROE ' . ($f['roe'] ?? '-') . ', EPS ' . ($f['eps'] ?? '-');
+        $thought_steps[] = 'Langkah 4 - Fundamental: Kualitas emiten dicek via PE/PBV/ROE/EPS untuk validasi posisi menengah.';
+    } else {
+        $thought_steps[] = 'Langkah 4 - Fundamental: Data fundamental minim, bobot keputusan dialihkan ke momentum dan manajemen risiko.';
     }
     if (isset($analysis['fund_score'])) {
         $other_reasons[] = 'Skor AI: ' . ($analysis['fund_score'] ?? '-') . '/99 (Fundamental: ' . ($analysis['fund_score'] ?? '-') . ')';
+        $scoreVal = (int)$analysis['fund_score'];
+        if ($scoreVal >= 75) {
+            $thought_steps[] = 'Langkah 5 - Skor: Skor AI tinggi (' . $scoreVal . '/99), posisi dipertahankan selama risk limit aman.';
+        } elseif ($scoreVal >= 50) {
+            $thought_steps[] = 'Langkah 5 - Skor: Skor AI menengah (' . $scoreVal . '/99), posisi tetap valid namun perlu monitoring rapat.';
+        } else {
+            $thought_steps[] = 'Langkah 5 - Skor: Skor AI rendah (' . $scoreVal . '/99), AI cenderung defensif dan siap evaluasi keluar.';
+        }
+    } else {
+        $thought_steps[] = 'Langkah 5 - Skor: Skor AI tidak tersedia, keputusan ditentukan oleh kombinasi sinyal yang ada.';
     }
+
+    if ($pl_pct <= -3) {
+        $thought_steps[] = 'Langkah 6 - Risiko: Floating P/L sudah menembus area stop loss, prioritas utama proteksi modal.';
+    } elseif ($pl_pct >= 5) {
+        $thought_steps[] = 'Langkah 6 - Risiko: Floating P/L sudah di area target profit, AI siaga mengunci keuntungan.';
+    } else {
+        $thought_steps[] = 'Langkah 6 - Risiko: Floating P/L masih dalam zona normal, strategi utama adalah hold terukur.';
+    }
+
+    $signalLabel = strtoupper((string)($analysis['signal'] ?? 'HOLD'));
+    $thought_steps[] = 'Kesimpulan AI: Sinyal saat ini ' . $signalLabel . ', keputusan tetap dinamis mengikuti update harga berikutnya.';
+
     $o['ai_signals'] = implode(' | ', $ai_signals);
     $o['other_reasons'] = implode(' | ', $other_reasons);
+    $o['ai_thought_steps'] = $thought_steps;
 }
 unset($o);
 
@@ -248,6 +289,25 @@ if (!in_array($ledger_action, $allowed_ledger_actions, true)) {
 $ledger_symbol = isset($_GET['ledger_symbol']) ? strtoupper(trim((string)$_GET['ledger_symbol'])) : '';
 if ($ledger_symbol !== '' && !preg_match('/^[A-Z0-9\.]+$/', $ledger_symbol)) {
     $ledger_symbol = '';
+}
+
+function buildSyntheticLedgerTimestamp(string $date, string $action, int $sequence = 0): string {
+    $safeDate = preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) ? $date : date('Y-m-d');
+    $sequence = max(0, $sequence);
+    $action = strtoupper(trim($action));
+
+    if ($action === 'SELL') {
+        $base = strtotime($safeDate . ' 15:14:50');
+        return date('Y-m-d H:i:s', $base - min($sequence, 599));
+    }
+
+    if ($action === 'SEROK') {
+        $base = strtotime($safeDate . ' 13:45:10');
+        return date('Y-m-d H:i:s', $base + min($sequence, 599));
+    }
+
+    $base = strtotime($safeDate . ' 09:15:10');
+    return date('Y-m-d H:i:s', $base + min($sequence, 599));
 }
 
 $ledger_date_esc = $mysqli->real_escape_string($ledger_date);
@@ -306,6 +366,35 @@ if ($res_ledger) {
     }
 }
 
+// Fallback/source-of-truth untuk penutupan posisi: langsung dari tabel robo_trades
+// Ini memastikan event SELL tetap terlihat walau audit log lama belum lengkap.
+$closed_history_rows = [];
+if ($ledger_action === 'ALL' || $ledger_action === 'SELL') {
+    $closed_symbol_sql = '';
+    if ($ledger_symbol !== '') {
+        $ledger_symbol_esc2 = $mysqli->real_escape_string($ledger_symbol);
+        $closed_symbol_sql = " AND symbol = '{$ledger_symbol_esc2}' ";
+    }
+
+    $closed_history_sql = "
+        SELECT sell_date, symbol, sell_price, lots, sell_reason, profit_loss_rp, profit_loss_pct
+        FROM robo_trades
+        WHERE user_id = {$user_id}
+          AND status = 'CLOSED'
+          AND sell_date = '{$ledger_date_esc}'
+          {$closed_symbol_sql}
+        ORDER BY sell_date DESC, id DESC
+        LIMIT 200
+    ";
+
+    $res_closed_history = $mysqli->query($closed_history_sql);
+    if ($res_closed_history) {
+        while ($r = $res_closed_history->fetch_assoc()) {
+            $closed_history_rows[] = $r;
+        }
+    }
+}
+
 $ledger_export_rows = [];
 $ledger_export_sql = "
     SELECT created_at, symbol, action, price, lots, reason
@@ -319,6 +408,165 @@ if ($res_ledger_export) {
         $ledger_export_rows[] = $r;
     }
 }
+
+// Sinkronisasi transaksi dari tabel utama jika belum tercatat di audit log.
+$ledger_fallback_added_sell = 0;
+$ledger_fallback_added_buy = 0;
+$ledger_fallback_added_serok = 0;
+$ledger_fallback_added = 0;
+if (($ledger_action === 'ALL' || $ledger_action === 'SELL') && count($closed_history_rows) > 0) {
+    $auditSellIndex = [];
+    foreach ($ledger_export_rows as $row) {
+        $rowAction = strtoupper((string)($row['action'] ?? ''));
+        if ($rowAction !== 'SELL') {
+            continue;
+        }
+        $rowSymbol = strtoupper((string)($row['symbol'] ?? ''));
+        $rowPrice = isset($row['price']) ? (float)$row['price'] : 0;
+        $rowLots = isset($row['lots']) ? (int)$row['lots'] : 0;
+        $key = $rowSymbol . '|' . number_format($rowPrice, 4, '.', '') . '|' . $rowLots;
+        $auditSellIndex[$key] = true;
+    }
+
+    foreach ($closed_history_rows as $closedIndex => $closedRow) {
+        $symbol = strtoupper((string)($closedRow['symbol'] ?? ''));
+        $sellPrice = isset($closedRow['sell_price']) ? (float)$closedRow['sell_price'] : 0;
+        $lots = isset($closedRow['lots']) ? (int)$closedRow['lots'] : 0;
+        if ($symbol === '' || $sellPrice <= 0 || $lots <= 0) {
+            continue;
+        }
+
+        $key = $symbol . '|' . number_format($sellPrice, 4, '.', '') . '|' . $lots;
+        if (isset($auditSellIndex[$key])) {
+            continue;
+        }
+
+        $sellDate = (string)($closedRow['sell_date'] ?? $ledger_date);
+        $reason = '[SYNC robo_trades] ' . (string)($closedRow['sell_reason'] ?? 'Sell tercatat di transaksi utama');
+        $synthetic = [
+            'created_at' => buildSyntheticLedgerTimestamp($sellDate, 'SELL', (int)$closedIndex),
+            'symbol' => $symbol,
+            'action' => 'SELL',
+            'price' => $sellPrice,
+            'lots' => $lots,
+            'reason' => $reason,
+        ];
+
+        $ledger_rows[] = $synthetic;
+        $ledger_export_rows[] = $synthetic;
+        $auditSellIndex[$key] = true;
+        $ledger_fallback_added_sell++;
+    }
+
+    if ($ledger_fallback_added_sell > 0) {
+        usort($ledger_rows, function ($a, $b) {
+            return strcmp((string)$b['created_at'], (string)$a['created_at']);
+        });
+        usort($ledger_export_rows, function ($a, $b) {
+            return strcmp((string)$b['created_at'], (string)$a['created_at']);
+        });
+    }
+}
+
+// Sinkronisasi BUY/SEROK dari tabel transaksi utama jika audit log tidak lengkap.
+if ($ledger_action === 'ALL' || $ledger_action === 'BUY' || $ledger_action === 'SEROK') {
+    $buy_symbol_sql = '';
+    if ($ledger_symbol !== '') {
+        $ledger_symbol_esc3 = $mysqli->real_escape_string($ledger_symbol);
+        $buy_symbol_sql = " AND symbol = '{$ledger_symbol_esc3}' ";
+    }
+
+    $buy_history_rows = [];
+    $buy_history_sql = "
+        SELECT buy_date, symbol, buy_price, lots, buy_reason
+        FROM robo_trades
+        WHERE user_id = {$user_id}
+          AND buy_date = '{$ledger_date_esc}'
+          {$buy_symbol_sql}
+        ORDER BY buy_date DESC, id DESC
+        LIMIT 300
+    ";
+    $res_buy_history = $mysqli->query($buy_history_sql);
+    if ($res_buy_history) {
+        while ($r = $res_buy_history->fetch_assoc()) {
+            $buy_history_rows[] = $r;
+        }
+    }
+
+    if (count($buy_history_rows) > 0) {
+        $auditActionCount = [];
+        foreach ($ledger_export_rows as $row) {
+            $rowAction = strtoupper((string)($row['action'] ?? ''));
+            if ($rowAction !== 'BUY' && $rowAction !== 'SEROK') {
+                continue;
+            }
+            $rowSymbol = strtoupper((string)($row['symbol'] ?? ''));
+            $rowPrice = isset($row['price']) ? (float)$row['price'] : 0;
+            $rowLots = isset($row['lots']) ? (int)$row['lots'] : 0;
+            if ($rowSymbol === '' || $rowPrice <= 0 || $rowLots <= 0) {
+                continue;
+            }
+            $key = $rowAction . '|' . $rowSymbol . '|' . number_format($rowPrice, 4, '.', '') . '|' . $rowLots;
+            $auditActionCount[$key] = ($auditActionCount[$key] ?? 0) + 1;
+        }
+
+        foreach ($buy_history_rows as $buyIndex => $buyRow) {
+            $symbol = strtoupper((string)($buyRow['symbol'] ?? ''));
+            $buyPrice = isset($buyRow['buy_price']) ? (float)$buyRow['buy_price'] : 0;
+            $lots = isset($buyRow['lots']) ? (int)$buyRow['lots'] : 0;
+            if ($symbol === '' || $buyPrice <= 0 || $lots <= 0) {
+                continue;
+            }
+
+            $buyReasonRaw = (string)($buyRow['buy_reason'] ?? '');
+            $buyReasonUpper = strtoupper($buyReasonRaw);
+            $inferredAction = (strpos($buyReasonUpper, 'SEROK') !== false)
+                ? 'SEROK'
+                : 'BUY';
+
+            if ($ledger_action !== 'ALL' && $ledger_action !== $inferredAction) {
+                continue;
+            }
+
+            $key = $inferredAction . '|' . $symbol . '|' . number_format($buyPrice, 4, '.', '') . '|' . $lots;
+            if (!empty($auditActionCount[$key])) {
+                $auditActionCount[$key]--;
+                continue;
+            }
+
+            $buyDate = (string)($buyRow['buy_date'] ?? $ledger_date);
+            $reason = '[SYNC robo_trades] ' . ($buyReasonRaw !== '' ? $buyReasonRaw : 'Pembelian tercatat di transaksi utama');
+            $synthetic = [
+                'created_at' => buildSyntheticLedgerTimestamp($buyDate, $inferredAction, (int)$buyIndex),
+                'symbol' => $symbol,
+                'action' => $inferredAction,
+                'price' => $buyPrice,
+                'lots' => $lots,
+                'reason' => $reason,
+            ];
+
+            $ledger_rows[] = $synthetic;
+            $ledger_export_rows[] = $synthetic;
+
+            if ($inferredAction === 'SEROK') {
+                $ledger_fallback_added_serok++;
+            } else {
+                $ledger_fallback_added_buy++;
+            }
+        }
+
+        if ($ledger_fallback_added_buy > 0 || $ledger_fallback_added_serok > 0) {
+            usort($ledger_rows, function ($a, $b) {
+                return strcmp((string)$b['created_at'], (string)$a['created_at']);
+            });
+            usort($ledger_export_rows, function ($a, $b) {
+                return strcmp((string)$b['created_at'], (string)$a['created_at']);
+            });
+        }
+    }
+}
+
+$ledger_fallback_added = $ledger_fallback_added_sell + $ledger_fallback_added_buy + $ledger_fallback_added_serok;
 
 $ledger_summary = [
     'BUY' => ['count' => 0, 'value' => 0],
@@ -653,6 +901,28 @@ $pageTitle = 'Robo-Trader Simulator | Analisis Saham';
         .open-trades-actions { display:flex; flex-direction:column; gap:4px; align-items:flex-end; margin-left:auto; }
         .btn-refresh-live { padding:6px 14px; background:#0ea5e9; color:#fff; border:none; border-radius:5px; cursor:pointer; font-size:13px; font-weight:bold; max-width:100%; white-space:nowrap; }
         .live-status { font-size:11px; color:#64748b; text-align:right; }
+        .live-status-indicator {
+            display:inline-block;
+            width:8px;
+            height:8px;
+            border-radius:999px;
+            margin-right:6px;
+            background:#94a3b8;
+            vertical-align:middle;
+            box-shadow:0 0 0 2px rgba(148,163,184,0.25);
+        }
+        .live-status-indicator.ok {
+            background:#16a34a;
+            box-shadow:0 0 0 2px rgba(22,163,74,0.22);
+        }
+        .live-status-indicator.warn {
+            background:#d97706;
+            box-shadow:0 0 0 2px rgba(217,119,6,0.22);
+        }
+        .live-status-indicator.err {
+            background:#dc2626;
+            box-shadow:0 0 0 2px rgba(220,38,38,0.22);
+        }
         @media (max-width: 900px) {
             .open-trades-actions { width:100%; align-items:flex-start; margin-left:0; }
             .btn-refresh-live { width:100%; white-space:normal; }
@@ -663,6 +933,76 @@ $pageTitle = 'Robo-Trader Simulator | Analisis Saham';
     th { background: #f8fafc; color: #64748b; font-size: 13px; text-transform: uppercase; }
     tr:last-child td { border-bottom: none; }
     tr:hover { background: #f8fafc; }
+
+    .open-trades-table { table-layout: fixed; }
+    .open-trades-table th, .open-trades-table td { vertical-align: top; }
+    .open-trades-table th:nth-child(1) { width: 9%; }
+    .open-trades-table th:nth-child(2) { width: 10%; }
+    .open-trades-table th:nth-child(3) { width: 11%; }
+    .open-trades-table th:nth-child(4) { width: 9%; }
+    .open-trades-table th:nth-child(5) { width: 9%; }
+    .open-trades-table th:nth-child(6) { width: 11%; }
+    .open-trades-table th:nth-child(7) { width: 20%; }
+    .open-trades-table th:nth-child(8) { width: 21%; }
+    .open-trades-table .ai-cell,
+    .open-trades-table .reason-cell {
+        font-size: 12px;
+        line-height: 1.45;
+        color: #0f172a;
+        white-space: normal;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+    }
+    .open-trades-table .ot-preview {
+        display: block;
+    }
+    .open-trades-table .ot-full {
+        display: none;
+    }
+    .open-trades-table tr.open-row-expanded .ot-preview {
+        display: none;
+    }
+    .open-trades-table tr.open-row-expanded .ot-full {
+        display: block;
+    }
+    .btn-open-detail {
+        margin-top: 8px;
+        padding: 4px 8px;
+        border: 1px solid #bfdbfe;
+        border-radius: 6px;
+        background: #eff6ff;
+        color: #1d4ed8;
+        font-size: 11px;
+        font-weight: 700;
+        cursor: pointer;
+    }
+    .btn-open-detail:hover {
+        background: #dbeafe;
+    }
+    .ot-thought {
+        margin-top: 8px;
+        padding: 8px 10px;
+        border: 1px solid #dbeafe;
+        border-radius: 8px;
+        background: #f8fbff;
+    }
+    .ot-thought-title {
+        margin-bottom: 5px;
+        font-size: 11px;
+        font-weight: 700;
+        color: #1d4ed8;
+        text-transform: uppercase;
+        letter-spacing: .2px;
+    }
+    .ot-thought-list {
+        margin: 0;
+        padding-left: 16px;
+        font-size: 12px;
+        color: #1e293b;
+    }
+    .ot-thought-list li {
+        margin-bottom: 3px;
+    }
     
     .badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
     .bg-green { background: #dcfce7; color: #166534; }
@@ -670,41 +1010,31 @@ $pageTitle = 'Robo-Trader Simulator | Analisis Saham';
     .bg-blue { background: #dbeafe; color: #1e40af; }
     .bg-gray { background: #f1f5f9; color: #475569; }
     .bg-orange { background: #ffedd5; color: #9a3412; }
+    .bg-teal { background: #ccfbf1; color: #115e59; }
     
     .text-green { color: #166534; font-weight: bold; }
     .text-red { color: #991b1b; font-weight: bold; }
   </style>
 
 <style>
-.robo-loading-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(15, 23, 42, 0.28);
+.robo-loading-inline {
     display: none;
     align-items: center;
-    justify-content: center;
-    z-index: 9999;
-}
-.robo-loading-overlay.active {
-    display: flex;
-}
-.robo-loading-box {
-    background: #ffffff;
-    border: 1px solid #dbeafe;
-    border-radius: 10px;
-    padding: 14px 18px;
-    min-width: 280px;
-    box-shadow: 0 8px 25px rgba(15, 23, 42, 0.2);
-    display: flex;
-    align-items: center;
-    gap: 10px;
+    gap: 8px;
+    font-size: 12px;
     color: #1e3a8a;
-    font-size: 13px;
-    font-weight: 600;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 6px;
+    padding: 6px 10px;
+    white-space: nowrap;
+}
+.robo-loading-inline.active {
+    display: inline-flex;
 }
 .robo-loading-spinner {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     border: 2px solid #bfdbfe;
     border-top-color: #2563eb;
     border-radius: 50%;
@@ -714,13 +1044,6 @@ $pageTitle = 'Robo-Trader Simulator | Analisis Saham';
     to { transform: rotate(360deg); }
 }
 </style>
-
-<div id="roboLoadingOverlay" class="robo-loading-overlay" aria-hidden="true">
-    <div class="robo-loading-box">
-        <div class="robo-loading-spinner"></div>
-        <div id="roboLoadingText">Robo AI sedang memproses data...</div>
-    </div>
-</div>
 
 <div style="margin-bottom: 25px;">
     <h2 style="margin:0; color:#0f172a;">&#x1F916; AI Robo-Trader Simulator</h2>
@@ -779,6 +1102,10 @@ $pageTitle = 'Robo-Trader Simulator | Analisis Saham';
     <input type="number" name="modal_awal" min="1000000" step="100000" value="<?= $eq_capital ?>" style="padding:10px; border:1px solid #cbd5e1; border-radius:5px; font-weight:bold; min-width:200px;">
     <button type="submit" onclick="return confirm('Apakah Anda yakin? Mengubah modal akan MENGHAPUS SEMUA DATA simulasi (history & portofolio) untuk akun ini dan memulai dari awal.')" style="padding: 10px 20px; background: #f59e0b; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight:bold; white-space:nowrap;">Update & Reset Data</button>
         <a id="btnRunRobotNow" href="<?= htmlspecialchars($portfolioUrl('robo_run_now.php'), ENT_QUOTES, 'UTF-8') ?>" style="padding:10px 20px; background:#2563eb; color:#fff; text-decoration:none; border-radius:5px; font-weight:bold; white-space:nowrap; display:inline-flex; align-items:center;">Jalankan Robot Sekarang</a>
+        <span id="roboLoadingInline" class="robo-loading-inline" aria-live="polite">
+            <span class="robo-loading-spinner"></span>
+            <span id="roboLoadingText">Robo AI sedang memproses data...</span>
+        </span>
         </form>
     </div>
 </div>
@@ -799,13 +1126,18 @@ $pageTitle = 'Robo-Trader Simulator | Analisis Saham';
 <div id="robotLastRun" style="margin:10px 0 20px 0; color:#64748b; font-size:13px; font-style:italic;"></div>
 <script>
 function setRoboLoading(isLoading, text) {
-    var overlay = document.getElementById('roboLoadingOverlay');
+    var inline = document.getElementById('roboLoadingInline');
     var label = document.getElementById('roboLoadingText');
-    if (!overlay) return;
+    var runNowBtn = document.getElementById('btnRunRobotNow');
+    if (!inline) return;
     if (label && text) {
         label.textContent = text;
     }
-    overlay.classList.toggle('active', !!isLoading);
+    inline.classList.toggle('active', !!isLoading);
+    if (runNowBtn) {
+        runNowBtn.style.pointerEvents = isLoading ? 'none' : 'auto';
+        runNowBtn.style.opacity = isLoading ? '0.7' : '1';
+    }
 }
 
 function updateRobotLastRun(msg) {
@@ -833,6 +1165,13 @@ function runRoboAuto() {
         .finally(function () {
             setRoboLoading(false);
         });
+}
+
+function toggleOpenTradeDetail(button) {
+    var row = button ? button.closest('tr') : null;
+    if (!row) return;
+    var expanded = row.classList.toggle('open-row-expanded');
+    button.textContent = expanded ? 'Sembunyikan Detail' : 'Lihat Detail';
 }
 
 // Jalankan saat halaman dimuat (ambil status awal)
@@ -957,13 +1296,13 @@ setInterval(function() {
         <span>Posisi Menggantung (OPEN TRADES)</span>
         <div class="open-trades-actions">
             <button id="btnRefreshPrice" class="btn-refresh-live" onclick="fetchLivePrices(false)">&#x21bb; Refresh Harga Live <span id="liveCountdown" style="font-size:11px; opacity:0.8;"></span></button>
-            <span id="liveRefreshStatus" class="live-status">Auto-refresh setiap 5 detik</span>
+            <span id="liveRefreshStatus" class="live-status"><span id="liveStatusDot" class="live-status-indicator"></span>Auto-refresh setiap 30 detik</span>
         </div>
     </div>
     <div style="padding:10px 20px; font-size:12px; color:#475569; border-bottom:1px solid #e2e8f0; background:#f8fafc;">
         OPEN berarti order <b>sudah terbeli</b> oleh robot (mode simulasi/paper trading), bukan sekadar watchlist.
     </div>
-    <table>
+    <table class="open-trades-table">
         <thead>
             <tr>
                 <th>Ticker</th>
@@ -981,6 +1320,27 @@ setInterval(function() {
             <tr><td colspan="8" style="text-align:center; padding: 20px; color:#94a3b8;">Belum ada saham yang sedang di-hold. Menunggu sinyal market.</td></tr>
             <?php else: ?>
                 <?php foreach ($open as $o): ?>
+                <?php
+                    $aiFullText = isset($o['ai_signals']) ? trim((string)$o['ai_signals']) : '';
+                    $reasonFullText = isset($o['other_reasons']) ? trim((string)$o['other_reasons']) : '';
+                    $thoughtSteps = isset($o['ai_thought_steps']) && is_array($o['ai_thought_steps']) ? $o['ai_thought_steps'] : [];
+                    if ($aiFullText === '') {
+                        $aiFullText = '-';
+                    }
+                    if ($reasonFullText === '') {
+                        $reasonFullText = '-';
+                    }
+
+                    $aiPreviewText = $aiFullText;
+                    $reasonPreviewText = $reasonFullText;
+                    if (strlen($aiPreviewText) > 220) {
+                        $aiPreviewText = substr($aiPreviewText, 0, 220) . '...';
+                    }
+                    if (strlen($reasonPreviewText) > 260) {
+                        $reasonPreviewText = substr($reasonPreviewText, 0, 260) . '...';
+                    }
+                    $hasExpandableDetail = ($aiPreviewText !== $aiFullText) || ($reasonPreviewText !== $reasonFullText) || count($thoughtSteps) > 0;
+                ?>
                 <tr data-symbol="<?= htmlspecialchars($o['symbol']) ?>" data-buy="<?= (float)$o['buy_price'] ?>" data-lots="<?= (int)$o['lots'] ?>">
                     <td><b><a href="chart.php?symbol=<?= $o['symbol'] ?>" target="_blank" style="color:#0d6efd; text-decoration:none;"><?= $o['symbol'] ?></a></b></td>
                     <td><?= $o['buy_date'] ?></td>
@@ -991,11 +1351,28 @@ setInterval(function() {
                         <?= ((float)$o['floating_pl_rp']) > 0 ? '+' : '' ?>Rp <?= number_format((float)$o['floating_pl_rp'], 0, ',', '.') ?>
                         (<?= round((float)$o['floating_pl_pct'], 2) ?>%)
                     </td>
-                    <td style="font-size:12px;">
-                        <?= isset($o['ai_signals']) ? htmlspecialchars($o['ai_signals']) : '-' ?>
+                    <td class="ai-cell" title="<?= htmlspecialchars($aiFullText, ENT_QUOTES, 'UTF-8') ?>">
+                        <div class="ot-preview"><?= htmlspecialchars($aiPreviewText) ?></div>
+                        <div class="ot-full"><?= htmlspecialchars($aiFullText) ?></div>
                     </td>
-                    <td style="font-size:12px;">
-                        <?= isset($o['other_reasons']) ? htmlspecialchars($o['other_reasons']) : '-' ?>
+                    <td class="reason-cell" title="<?= htmlspecialchars($reasonFullText, ENT_QUOTES, 'UTF-8') ?>">
+                        <div class="ot-preview"><?= htmlspecialchars($reasonPreviewText) ?></div>
+                        <div class="ot-full">
+                            <?= htmlspecialchars($reasonFullText) ?>
+                            <?php if (count($thoughtSteps) > 0): ?>
+                            <div class="ot-thought">
+                                <div class="ot-thought-title">Thought Process AI (Ringkas)</div>
+                                <ol class="ot-thought-list">
+                                    <?php foreach ($thoughtSteps as $step): ?>
+                                        <li><?= htmlspecialchars((string)$step) ?></li>
+                                    <?php endforeach; ?>
+                                </ol>
+                            </div>
+                            <?php endif; ?>
+                        </div>
+                        <?php if ($hasExpandableDetail): ?>
+                            <button type="button" class="btn-open-detail" onclick="toggleOpenTradeDetail(this)">Lihat Detail</button>
+                        <?php endif; ?>
                     </td>
                 </tr>
                 <?php endforeach; ?>
@@ -1028,7 +1405,13 @@ setInterval(function() {
         </form>
     </div>
     <div style="padding:10px 20px; font-size:12px; color:#475569; border-bottom:1px solid #e2e8f0; background:#f8fafc;">
-        Default hanya menampilkan transaksi pada tanggal yang dipilih. Riwayat ini mencakup BUY, SELL, SEROK, dan aksi robot lain pada hari tersebut. Total data: <b><?= number_format($ledger_total_rows, 0, ',', '.') ?></b> baris.
+        Default hanya menampilkan transaksi pada tanggal yang dipilih. Riwayat ini mencakup BUY, SELL, SEROK, dan aksi robot lain pada hari tersebut. Total data audit: <b><?= number_format($ledger_total_rows, 0, ',', '.') ?></b> baris.
+        <?php if ($ledger_fallback_added > 0): ?>
+            <br><span style="color:#0f766e;">Tambahan sinkronisasi dari transaksi utama: <b><?= number_format($ledger_fallback_added, 0, ',', '.') ?></b> baris (BUY: <?= number_format($ledger_fallback_added_buy, 0, ',', '.') ?>, SEROK: <?= number_format($ledger_fallback_added_serok, 0, ',', '.') ?>, SELL: <?= number_format($ledger_fallback_added_sell, 0, ',', '.') ?>).</span>
+        <?php endif; ?>
+        <?php if ($ledger_action === 'ALL' || $ledger_action === 'SELL'): ?>
+            <br>Penutupan posisi dari sumber transaksi robo: <b><?= number_format(count($closed_history_rows), 0, ',', '.') ?></b> baris.
+        <?php endif; ?>
     </div>
     <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; padding:12px 20px; border-bottom:1px solid #e2e8f0; background:#fff;">
         <div style="border:1px solid #dbeafe; background:#eff6ff; border-radius:8px; padding:10px 12px;">
@@ -1079,6 +1462,11 @@ setInterval(function() {
                     $price = isset($row['price']) ? (float)$row['price'] : 0;
                     $lots = isset($row['lots']) ? (int)$row['lots'] : 0;
                     $value = $price > 0 && $lots > 0 ? $price * $lots * 100 : 0;
+                    $reasonText = (string)($row['reason'] ?? '');
+                    $isSyncRow = stripos($reasonText, '[SYNC robo_trades]') === 0;
+                    $reasonDisplay = $isSyncRow
+                        ? preg_replace('/^\[SYNC robo_trades\]\s*/i', '', $reasonText)
+                        : $reasonText;
                     $badge_cls = 'bg-gray';
                     if ($action === 'BUY') $badge_cls = 'bg-blue';
                     elseif ($action === 'SEROK') $badge_cls = 'bg-orange';
@@ -1093,7 +1481,12 @@ setInterval(function() {
                     <td><?= $price > 0 ? 'Rp ' . number_format($price, 0, ',', '.') : '-' ?></td>
                     <td><?= $lots > 0 ? number_format($lots, 0, ',', '.') : '-' ?></td>
                     <td><?= $value > 0 ? 'Rp ' . number_format($value, 0, ',', '.') : '-' ?></td>
-                    <td style="font-size:12px;"><?= htmlspecialchars((string)$row['reason']) ?></td>
+                    <td style="font-size:12px;">
+                        <?php if ($isSyncRow): ?>
+                            <span class="badge bg-teal" style="margin-right:6px;">SYNC</span>
+                        <?php endif; ?>
+                        <?= htmlspecialchars((string)$reasonDisplay) ?>
+                    </td>
                 </tr>
                 <?php endforeach; ?>
             <?php endif; ?>
@@ -1115,6 +1508,55 @@ setInterval(function() {
     </div>
     <?php endif; ?>
 </div>
+
+<?php if ($ledger_action === 'ALL' || $ledger_action === 'SELL'): ?>
+<div class="tbl-container" style="border-top: 4px solid #64748b;">
+    <div class="tbl-header">Riwayat Penutupan Posisi (Sumber: robo_trades)</div>
+    <div style="padding:10px 20px; font-size:12px; color:#475569; border-bottom:1px solid #e2e8f0; background:#f8fafc;">
+        Bagian ini menampilkan posisi yang benar-benar sudah ditutup pada tanggal filter, walau audit log tidak lengkap.
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Tanggal</th>
+                <th>Ticker</th>
+                <th>Harga Jual</th>
+                <th>Lot</th>
+                <th>Value</th>
+                <th>P/L</th>
+                <th>Alasan</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php if (count($closed_history_rows) == 0): ?>
+            <tr><td colspan="7" style="text-align:center; padding: 20px; color:#94a3b8;">Belum ada posisi CLOSED pada tanggal <?= htmlspecialchars($ledger_date) ?>.</td></tr>
+            <?php else: ?>
+                <?php foreach ($closed_history_rows as $row): ?>
+                <?php
+                    $sellPrice = isset($row['sell_price']) ? (float)$row['sell_price'] : 0;
+                    $lots = isset($row['lots']) ? (int)$row['lots'] : 0;
+                    $value = ($sellPrice > 0 && $lots > 0) ? ($sellPrice * $lots * 100) : 0;
+                    $plRp = isset($row['profit_loss_rp']) ? (float)$row['profit_loss_rp'] : 0;
+                    $plPct = isset($row['profit_loss_pct']) ? (float)$row['profit_loss_pct'] : 0;
+                ?>
+                <tr>
+                    <td><?= htmlspecialchars((string)$row['sell_date']) ?></td>
+                    <td><b><?= htmlspecialchars((string)$row['symbol']) ?></b></td>
+                    <td><?= $sellPrice > 0 ? 'Rp ' . number_format($sellPrice, 0, ',', '.') : '-' ?></td>
+                    <td><?= $lots > 0 ? number_format($lots, 0, ',', '.') : '-' ?></td>
+                    <td><?= $value > 0 ? 'Rp ' . number_format($value, 0, ',', '.') : '-' ?></td>
+                    <td class="<?= $plRp >= 0 ? 'text-green' : 'text-red' ?>">
+                        <?= $plRp >= 0 ? '+' : '-' ?>Rp <?= number_format(abs($plRp), 0, ',', '.') ?>
+                        (<?= $plPct >= 0 ? '+' : '' ?><?= number_format($plPct, 2) ?>%)
+                    </td>
+                    <td style="font-size:12px;"><?= htmlspecialchars((string)$row['sell_reason']) ?></td>
+                </tr>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </tbody>
+    </table>
+</div>
+<?php endif; ?>
 
 <div class="tbl-container" style="border-top: 4px solid #3b82f6;">
     <div class="tbl-header">Rekomendasi Menunggu (Belum Dibeli)</div>
@@ -1183,18 +1625,33 @@ setInterval(function() {
 <script>
 var _liveRefreshTimer = null;
 var _liveCountdownTimer = null;
-var _liveRefreshIntervalMs = 5000;
+var _liveRefreshIntervalMs = 30000;
 var _liveCountdownSec = _liveRefreshIntervalMs / 1000;
 var _liveRefreshInFlight = false;
+var _liveLastUpdated = '';
+
+function _setLiveStatus(text, state) {
+    const statusEl = document.getElementById('liveRefreshStatus');
+    const dotEl = document.getElementById('liveStatusDot');
+    if (statusEl) {
+        statusEl.innerHTML = '<span id="liveStatusDot" class="live-status-indicator"></span>' + text;
+    }
+    const realDot = document.getElementById('liveStatusDot') || dotEl;
+    if (realDot) {
+        realDot.classList.remove('ok', 'warn', 'err');
+        if (state === 'ok') realDot.classList.add('ok');
+        else if (state === 'warn') realDot.classList.add('warn');
+        else if (state === 'err') realDot.classList.add('err');
+    }
+}
 
 function fetchLivePrices(silent) {
     const rows = document.querySelectorAll('[data-symbol]');
     if (!rows.length || _liveRefreshInFlight) return;
 
     const btn = document.getElementById('btnRefreshPrice');
-    const statusEl = document.getElementById('liveRefreshStatus');
     if (!silent && btn) { btn.disabled = true; }
-    if (statusEl) statusEl.textContent = 'Memperbarui harga...';
+    _setLiveStatus('Memperbarui harga...', 'warn');
 
     const symbols = Array.from(rows).map(r => r.dataset.symbol);
     _liveRefreshInFlight = true;
@@ -1242,10 +1699,11 @@ function fetchLivePrices(silent) {
 
         const now = new Date();
         const timeStr = now.toLocaleTimeString('id-ID');
-        if (statusEl) statusEl.textContent = 'Terakhir diperbarui: ' + timeStr;
+        _liveLastUpdated = timeStr;
+        _setLiveStatus('Terakhir diperbarui: ' + timeStr + ' • refresh lagi ' + _liveCountdownSec + ' detik', 'ok');
     })
     .catch(() => {
-        if (statusEl) statusEl.textContent = 'Gagal memperbarui harga.';
+        _setLiveStatus('Gagal memperbarui harga • coba lagi otomatis ' + _liveCountdownSec + ' detik.', 'err');
     })
     .finally(() => {
         _liveRefreshInFlight = false;
@@ -1258,15 +1716,15 @@ function _startCountdown() {
     clearInterval(_liveCountdownTimer);
     clearInterval(_liveRefreshTimer);
     _liveCountdownSec = _liveRefreshIntervalMs / 1000;
-    const statusEl = document.getElementById('liveRefreshStatus');
-
     _liveCountdownTimer = setInterval(function() {
         _liveCountdownSec--;
-        if (statusEl && statusEl.textContent.indexOf('Terakhir') !== -1) {
-            // append countdown
+        if (_liveLastUpdated) {
+            _setLiveStatus('Terakhir diperbarui: ' + _liveLastUpdated + ' • refresh lagi ' + _liveCountdownSec + ' detik', 'ok');
+        } else {
+            _setLiveStatus('Auto-refresh setiap 30 detik • berikutnya ' + _liveCountdownSec + ' detik', 'warn');
         }
         const cdEl = document.getElementById('liveCountdown');
-        if (cdEl) cdEl.textContent = _liveCountdownSec + 'd';
+        if (cdEl) cdEl.textContent = _liveCountdownSec + 's';
         if (_liveCountdownSec <= 0) {
             clearInterval(_liveCountdownTimer);
         }

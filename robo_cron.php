@@ -146,6 +146,11 @@ while ($users && ($u = $users->fetch_assoc())) {
         }
 
         if ($sell) {
+            if (!robo_is_bursa_open()) {
+                echo "SKIP SELL [U{$uid}] {$sym} (di luar jam bursa).\n";
+                continue;
+            }
+
             $lots = (int)$t['lots'];
             $pl = ($curr_p - $buy_p) * ($lots * 100);
             $val = ($curr_p * $lots * 100);
