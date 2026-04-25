@@ -17,6 +17,8 @@ if ($currentPage === 'app.php' && isset($_GET['page'])) {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   padding: 0;
   width: min(96vw, 1700px);
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .bnav-top {
@@ -164,10 +166,20 @@ if ($currentPage === 'app.php' && isset($_GET['page'])) {
     display: inline-flex;
   }
 
+  /* Hanya top bar (brand + toggle button) yang di-clip, bukan area dropdown */
+  .bnav-top {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+
   .bnav-body {
     display: none;
     flex-direction: column;
     padding-top: 0;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .better-nav.open .bnav-body {
@@ -179,19 +191,39 @@ if ($currentPage === 'app.php' && isset($_GET['page'])) {
     flex-direction: column;
     width: 100%;
     margin-left: 0;
+    box-sizing: border-box;
   }
 
   .bnav-dropdown-content {
     position: static;
-    min-width: 100%;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     border-radius: 6px;
     margin: 2px 0 6px 0;
+    box-sizing: border-box;
+  }
+
+  .bnav-dropdown-content a {
+    width: 100%;
+    box-sizing: border-box;
+    word-break: break-word;
   }
 
   .bnav-item {
     width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
     justify-content: space-between;
     white-space: normal;
+    word-break: break-word;
+  }
+
+  .bnav-brand {
+    max-width: calc(100% - 90px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 </style>
@@ -239,14 +271,75 @@ if ($currentPage === 'app.php' && isset($_GET['page'])) {
       <?php if(session_status() === PHP_SESSION_NONE) session_start(); ?>
       <?php if(isset($_SESSION['user_id'])): ?>
         <?php if (isset($_SESSION['user_role']) && $_SESSION['user_role'] === 'admin'): ?>
+          <?php
+          // Cek apakah data fundamental sudah lebih dari 7 hari tidak diupdate
+          $fundamental_overdue = false;
+          $fundamental_last_update = null;
+          try {
+              if (!isset($mysqli) && function_exists('db_connect')) {
+                  require_once __DIR__ . '/db.php';
+                  $mysqli = db_connect();
+              }
+              if (isset($mysqli)) {
+                  $chk = $mysqli->query("SELECT MAX(fetched_at) as last_at FROM fundamentals LIMIT 1");
+                  if ($chk) {
+                      $row = $chk->fetch_assoc();
+                      if ($row && $row['last_at']) {
+                          $fundamental_last_update = $row['last_at'];
+                          $days_ago = (time() - strtotime($row['last_at'])) / 86400;
+                          $fundamental_overdue = ($days_ago > 7);
+                      } else {
+                          $fundamental_overdue = true; // belum pernah diupdate
+                      }
+                  }
+              }
+          } catch (Exception $e) { /* tabel belum ada, anggap overdue */ $fundamental_overdue = true; }
+          ?>
           <div class="bnav-dropdown">
-            <button type="button" class="bnav-item bnav-dropdown-trigger"><span class="bnav-icon">&#x1F451;</span>Admin<span class="bnav-caret">&#x25BE;</span></button>
-            <div class="bnav-dropdown-content" style="right:0; left:auto; min-width:180px;">
+            <button type="button" class="bnav-item bnav-dropdown-trigger <?= $fundamental_overdue ? 'fundamental-overdue-trigger' : '' ?>">
+              <span class="bnav-icon">&#x1F451;</span>Admin
+              <?php if ($fundamental_overdue): ?>
+                <span class="fundamental-badge-alert" title="Data fundamental &gt;7 hari belum diupdate!">&#x26A0;</span>
+              <?php endif; ?>
+              <span class="bnav-caret">&#x25BE;</span>
+            </button>
+            <div class="bnav-dropdown-content" style="right:0; left:auto; min-width:220px;">
               <a href="app.php?page=admin.php">&#x1F465; Manage Users</a>
               <a href="app.php?page=admin_manual.php">&#x1F4B3; Manual Langganan</a>
               <a href="app.php?page=scan_retention_settings.php">&#x1F5C3; Retensi Riwayat Scan</a>
+              <a href="fetch_fundamentals_cron.php" style="<?= $fundamental_overdue ? 'color:#fca5a5 !important; font-weight:bold;' : '' ?>">
+                &#x1F504; Update Fundamental
+                <?php if ($fundamental_overdue): ?>
+                  <span style="background:#ef4444;color:#fff;font-size:10px;padding:1px 5px;border-radius:4px;margin-left:4px;">OVERDUE</span>
+                <?php else: ?>
+                  <?php if ($fundamental_last_update): ?><small style="opacity:0.6;display:block;font-size:10px;"><?= date('d M Y', strtotime($fundamental_last_update)) ?></small><?php endif; ?>
+                <?php endif; ?>
+              </a>
             </div>
           </div>
+          <style>
+          .fundamental-badge-alert {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: #ef4444;
+            color: #fff;
+            border-radius: 50%;
+            width: 18px;
+            height: 18px;
+            font-size: 10px;
+            margin-left: 4px;
+            animation: pulse-alert 1.5s infinite;
+            flex-shrink: 0;
+          }
+          .fundamental-overdue-trigger {
+            outline: 1px solid #ef4444;
+          }
+          @keyframes pulse-alert {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50%       { opacity: 0.6; transform: scale(1.2); }
+          }
+          </style>
         <?php endif; ?>
 
         <div class="bnav-dropdown">

@@ -21,14 +21,19 @@ function auto_fetch_fundamentals($symbol) {
     $eps = isset($ks['trailingEps']['raw']) ? $ks['trailingEps']['raw'] : null;
     $pe = isset($ks['trailingPE']['raw']) ? $ks['trailingPE']['raw'] : null;
     $pbv = isset($ks['priceToBook']['raw']) ? $ks['priceToBook']['raw'] : null;
-    $roe = null; // Yahoo Finance does not provide ROE directly
+    // ROE: ambil langsung dari financialData.returnOnEquity (Yahoo Finance menyediakan ini)
+    $roe = null;
+    if (isset($fd['returnOnEquity']['raw'])) {
+        // Yahoo menyimpan sebagai desimal (0.15 = 15%), konversi ke persen
+        $roe = (float)$fd['returnOnEquity']['raw'] * 100;
+    }
     $de = isset($fd['debtToEquity']['raw']) ? $fd['debtToEquity']['raw'] : null;
     $revenue = isset($fd['totalRevenue']['raw']) ? $fd['totalRevenue']['raw'] : null;
     $netIncome = isset($fd['netIncomeToCommon']['raw']) ? $fd['netIncomeToCommon']['raw'] : null;
     $bookValue = isset($fd['bookValue']['raw']) ? $fd['bookValue']['raw'] : null;
     $currency = isset($price['currency']) ? $price['currency'] : null;
-    // ROE = Net Income / Book Value (Equity)
-    if ($netIncome !== null && $bookValue !== null && $bookValue != 0) {
+    // Fallback ROE = Net Income / Book Value jika returnOnEquity tidak tersedia
+    if ($roe === null && $netIncome !== null && $bookValue !== null && $bookValue != 0) {
         $roe = ($netIncome / $bookValue) * 100;
     }
     return [

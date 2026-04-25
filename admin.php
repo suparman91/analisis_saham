@@ -89,6 +89,61 @@ $pageTitle = 'Admin Dashboard | User Manager';
         <a href="admin.php" style="display:inline-block; background:#3b82f6; color:#fff; padding:10px 14px; border-radius:8px; text-decoration:none;">Manage Users</a>
         <a href="admin_manual.php" style="display:inline-block; background:#f59e0b; color:#fff; padding:10px 14px; border-radius:8px; text-decoration:none;">Manual Langganan</a>
     </div>
+
+    <?php
+    // ── Status update data fundamental ─────────────────────────────────────
+    $fund_last    = null;
+    $fund_overdue = false;
+    $fund_total   = 0;
+    $chkFund = $mysqli->query("SELECT MAX(fetched_at) as last_at, COUNT(DISTINCT symbol) as total FROM fundamentals");
+    if ($chkFund && $row = $chkFund->fetch_assoc()) {
+        $fund_last  = $row['last_at'];
+        $fund_total = (int)$row['total'];
+        if ($fund_last) {
+            $days_since = (time() - strtotime($fund_last)) / 86400;
+            $fund_overdue = ($days_since > 7);
+        } else {
+            $fund_overdue = true;
+        }
+    } else {
+        $fund_overdue = true; // tabel belum ada
+    }
+    ?>
+
+    <?php if ($fund_overdue): ?>
+    <div style="background:#7f1d1d; border:2px solid #ef4444; color:#fca5a5; padding:16px 20px; border-radius:10px; margin:0 0 20px 0; display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        <span style="font-size:28px;">&#x26A0;&#xFE0F;</span>
+        <div style="flex:1; min-width:200px;">
+            <strong style="font-size:15px; color:#fef2f2;">Data Fundamental Perlu Diperbarui!</strong><br>
+            <span style="font-size:13px;">
+            <?php if ($fund_last): ?>
+                Terakhir diupdate: <b><?= date('d M Y H:i', strtotime($fund_last)) ?></b>
+                (<?= round((time() - strtotime($fund_last)) / 86400) ?> hari lalu).
+            <?php else: ?>
+                Belum pernah diupdate.
+            <?php endif; ?>
+            Data PE, PBV, ROE sudah lebih dari 7 hari — sebaiknya diperbarui sekarang.
+            </span>
+        </div>
+        <a href="fetch_fundamentals_cron.php" style="background:#ef4444; color:#fff; padding:10px 18px; border-radius:8px; text-decoration:none; font-weight:bold; white-space:nowrap;">
+            &#x1F504; Update Sekarang
+        </a>
+    </div>
+    <?php else: ?>
+    <div style="background:#052e16; border:1px solid #16a34a; color:#86efac; padding:12px 20px; border-radius:10px; margin:0 0 20px 0; display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        <span style="font-size:22px;">&#x2705;</span>
+        <div style="flex:1;">
+            <strong>Data Fundamental Up-to-date</strong><br>
+            <span style="font-size:13px;">
+                <?= $fund_total ?> saham — terakhir diupdate: <b><?= date('d M Y H:i', strtotime($fund_last)) ?></b>.
+                Update berikutnya disarankan &leq; <?= date('d M Y', strtotime($fund_last) + 7*86400) ?>.
+            </span>
+        </div>
+        <a href="fetch_fundamentals_cron.php" style="background:#16a34a; color:#fff; padding:8px 16px; border-radius:8px; text-decoration:none; font-size:13px; white-space:nowrap;">
+            &#x1F504; Update Manual
+        </a>
+    </div>
+    <?php endif; ?>
     <div style="background:#f8fafc; border:1px solid #cbd5e1; color:#334155; padding:15px; border-radius:8px; margin:20px 0;">
         <strong>Proses Manual via WA:</strong> Gunakan tombol <span style="font-weight:bold; color:#16a34a;">ACC / Aktifkan</span> untuk memberi akses langganan setelah user konfirmasi pembayaran melalui WhatsApp. Jika ingin cabut akses, gunakan tombol <span style="font-weight:bold; color:#b45309;">Cabut Akses</span>.
     </div>
